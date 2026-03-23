@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  publish-tauri:
+  build:
     permissions:
       contents: write
     strategy:
@@ -20,17 +20,15 @@ jobs:
         include:
           - platform: "macos-latest"
             args: "--target aarch64-apple-darwin"
-          # Uncomment for Intel builds
-          #   - platform: 'macos-latest' # for Intel based macs.
-          #     args: '--target x86_64-apple-darwin'
+            target_dir: "aarch64-apple-darwin"
           - platform: "ubuntu-24.04"
             args: ""
+            target_dir: "release"
           - platform: "windows-latest"
             args: ""
+            target_dir: "release"
 
     runs-on: ${{ matrix.platform }}
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -52,7 +50,6 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          # Those targets are only used on macos runners so it's in an `if` to slightly speed up windows and linux builds.
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: install dependencies (ubuntu only)
@@ -61,20 +58,37 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - uses: tauri-apps/tauri-action@action-v0.5.20
+      - name: Build Tauri
         working-directory: src/netunnel-desktop-tauri
+        run: pnpm exec tauri build --config src-tauri/tauri.updater.conf.json ${{ matrix.args }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
-          TAURI_UPDATER_ENDPOINTS: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tauriScript: pnpm exec tauri build --config src-tauri/tauri.updater.conf.json
-          tagName: v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version.
-          releaseName: "v__VERSION__"
-          releaseBody: "See the repository changelog and release assets for this version."
-          releaseDraft: false
+          name: bundles-${{ matrix.platform }}
+          path: src/netunnel-desktop-tauri/src-tauri/target/${{ matrix.target_dir }}/release/bundle/**/*
+
+  release:
+    needs: build
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: bundles-*
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          draft: false
           prerelease: false
-          updaterJsonPreferNsis: true
-          args: ${{ matrix.args }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
