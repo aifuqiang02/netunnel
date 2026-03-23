@@ -29,6 +29,8 @@ jobs:
             args: ""
 
     runs-on: ${{ matrix.platform }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -60,19 +62,19 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - uses: tauri-apps/tauri-action@action-v0.5.20
+        working-directory: src/netunnel-desktop-tauri
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
           TAURI_UPDATER_ENDPOINTS: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
         with:
-          tauriScript: cd src/netunnel-desktop-tauri && pnpm exec tauri
+          tauriScript: pnpm exec tauri build --config src-tauri/tauri.updater.conf.json
           tagName: v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version.
           releaseName: "v__VERSION__"
           releaseBody: "See the repository changelog and release assets for this version."
           releaseDraft: false
           prerelease: false
           updaterJsonPreferNsis: true
-          args: ${{ matrix.args }} --config src/netunnel-desktop-tauri/src-tauri/tauri.updater.conf.json
+          args: ${{ matrix.args }}
