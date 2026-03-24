@@ -56,13 +56,4 @@
     "vitest": "^4.0.18",
     "vue-tsc": "^3.2.4"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@swc/core",
-      "@tailwindcss/oxide",
-      "electron",
-      "esbuild",
-      "vue-demi"
-    ]
-  }
 }

@@ -7,10 +7,21 @@
     "dev": "pnpm --filter netunnel-desktop-tauri dev",
     "build": "pnpm --filter netunnel-desktop-tauri build",
     "type-check": "pnpm --filter netunnel-desktop-tauri type-check",
-    "tauri": "pnpm --filter netunnel-desktop-tauri tauri"
+    "tauri": "pnpm --filter netunnel-desktop-tauri tauri",
+    "deploy:server": "node ./deploy/deploy.mjs"
   },
   "devDependencies": {
+    "node-ssh": "^13.1.0",
     "pnpm": "^10.0.0"
   },
-  "packageManager": "pnpm@10.0.0"
+  "packageManager": "pnpm@10.0.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@swc/core",
+      "@tailwindcss/oxide",
+      "electron",
+      "esbuild",
+      "vue-demi"
+    ]
+  }
 }
