@@ -1,0 +1,16 @@
+{
+  "name": "netunnel",
+  "private": true,
+  "version": "2.9.14",
+  "description": "Netunnel Desktop Application",
+  "scripts": {
+    "dev": "pnpm --filter netunnel-desktop-tauri dev",
+    "build": "pnpm --filter netunnel-desktop-tauri build",
+    "type-check": "pnpm --filter netunnel-desktop-tauri type-check",
+    "tauri": "pnpm --filter netunnel-desktop-tauri tauri"
+  },
+  "devDependencies": {
+    "pnpm": "^10.0.0"
+  },
+  "packageManager": "pnpm@10.0.0"
+}

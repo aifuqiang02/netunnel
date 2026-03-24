@@ -1,5 +1,5 @@
 {
-  "name": "tauri-app",
+  "name": "netunnel-desktop-tauri",
   "private": true,
   "version": "2.9.14",
   "type": "module",
