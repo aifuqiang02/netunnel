@@ -4,15 +4,16 @@ import "time"
 
 // User represents the minimal user aggregate currently needed by the server.
 type User struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email,omitempty"`
-	Nickname     string    `json:"nickname"`
-	AvatarURL    string    `json:"avatar_url,omitempty"`
-	PasswordHash string    `json:"-"`
-	WechatOpenid string    `json:"wechat_openid,omitempty"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string     `json:"id"`
+	Email        string     `json:"email,omitempty"`
+	Nickname     string     `json:"nickname"`
+	AvatarURL    string     `json:"avatar_url,omitempty"`
+	PasswordHash string     `json:"-"`
+	WechatOpenid string     `json:"wechat_openid,omitempty"`
+	Status       string     `json:"status"`
+	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 // Agent represents a client installation managed by the service.
@@ -194,6 +195,8 @@ type UserSubscription struct {
 type DashboardSummary struct {
 	UserID                  string               `json:"user_id"`
 	Account                 Account              `json:"account"`
+	TotalUsers              int                  `json:"total_users"`
+	OnlineUsers             int                  `json:"online_users"`
 	TotalAgents             int                  `json:"total_agents"`
 	OnlineAgents            int                  `json:"online_agents"`
 	TotalTunnels            int                  `json:"total_tunnels"`

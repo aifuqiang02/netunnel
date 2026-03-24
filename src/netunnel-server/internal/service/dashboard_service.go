@@ -10,14 +10,16 @@ import (
 )
 
 type DashboardService struct {
+	users   *repository.UserRepository
 	agents  *repository.AgentRepository
 	tunnels *repository.TunnelRepository
 	billing *BillingService
 	usage   *UsageService
 }
 
-func NewDashboardService(agents *repository.AgentRepository, tunnels *repository.TunnelRepository, billing *BillingService, usage *UsageService) *DashboardService {
+func NewDashboardService(users *repository.UserRepository, agents *repository.AgentRepository, tunnels *repository.TunnelRepository, billing *BillingService, usage *UsageService) *DashboardService {
 	return &DashboardService{
+		users:   users,
 		agents:  agents,
 		tunnels: tunnels,
 		billing: billing,
@@ -31,12 +33,26 @@ func (s *DashboardService) BuildSummary(ctx context.Context, userID string) (*do
 		return nil, fmt.Errorf("%w: user_id is required", ErrInvalidArgument)
 	}
 
+	if err := s.users.TouchLastLoginAtDaily(ctx, userID); err != nil {
+		return nil, err
+	}
+
 	account, err := s.billing.GetAccount(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 
 	totalAgents, onlineAgents, err := s.agents.CountByUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	onlineUsers, err := s.users.CountLoggedInToday(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	totalUsers, err := s.users.CountAll(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -59,6 +75,8 @@ func (s *DashboardService) BuildSummary(ctx context.Context, userID string) (*do
 	summary := &domain.DashboardSummary{
 		UserID:                userID,
 		Account:               *account,
+		TotalUsers:            totalUsers,
+		OnlineUsers:           onlineUsers,
 		TotalAgents:           totalAgents,
 		OnlineAgents:          onlineAgents,
 		TotalTunnels:          len(tunnels),

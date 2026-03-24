@@ -52,3 +52,20 @@ src/netunnel-desktop/
 
 # AI conversation logs (personal)
 messages/
+
+# Deploy artifacts
+.deploy-artifacts/
+deploy/
+
+# Workspace root node_modules
+node_modules/
+
+# Agent build cache
+src/netunnel-agent/.codex-cache/
+
+# Server local config (secrets)
+src/netunnel-server/config.local.yaml
+src/netunnel-server/config.production.yaml
+
+# NPC related
+src/nps/

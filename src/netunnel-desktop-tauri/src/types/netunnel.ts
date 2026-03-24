@@ -12,6 +12,8 @@ export interface Agent {
 export interface DashboardSummary {
   user_id: string
   account: { balance: string; currency: string }
+  total_users: number
+  online_users: number
   total_agents: number
   online_agents: number
   total_tunnels: number

@@ -8,7 +8,9 @@
     "build": "pnpm --filter netunnel-desktop-tauri build",
     "type-check": "pnpm --filter netunnel-desktop-tauri type-check",
     "tauri": "pnpm --filter netunnel-desktop-tauri tauri",
-    "deploy:server": "node ./deploy/deploy.mjs"
+    "deploy:server": "node ./deploy/deploy.mjs",
+    "remote:exec": "node ./deploy/remote-exec.mjs",
+    "sync:nginx:nps1": "node ./deploy/sync-nginx-nps1.mjs"
   },
   "devDependencies": {
     "node-ssh": "^13.1.0",

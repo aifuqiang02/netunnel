@@ -20,11 +20,12 @@ func (r *UserRepository) Create(ctx context.Context, email, nickname, avatarURL,
 	const query = `
 insert into users (email, nickname, avatar_url, password_hash, wechat_openid, status)
 values ($1, $2, $3, $4, $5, 'active')
-returning id, email, nickname, avatar_url, password_hash, wechat_openid, status, created_at, updated_at`
+returning id, email, nickname, avatar_url, password_hash, wechat_openid, status, last_login_at, created_at, updated_at`
 
 	var user domain.User
 	var avatar sql.NullString
 	var ns sql.NullString
+	var lastLoginAt sql.NullTime
 	err := r.db.QueryRowContext(ctx, query, nullableString(email), nickname, nullableString(avatarURL), passwordHash, nullableString(wechatOpenid)).Scan(
 		&user.ID,
 		&user.Email,
@@ -33,6 +34,7 @@ returning id, email, nickname, avatar_url, password_hash, wechat_openid, status,
 		&user.PasswordHash,
 		&ns,
 		&user.Status,
+		&lastLoginAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -44,6 +46,9 @@ returning id, email, nickname, avatar_url, password_hash, wechat_openid, status,
 	}
 	if avatar.Valid {
 		user.AvatarURL = avatar.String
+	}
+	if lastLoginAt.Valid {
+		user.LastLoginAt = &lastLoginAt.Time
 	}
 
 	return &user, nil
@@ -60,6 +65,7 @@ func scanUser(row *sql.Row) (*domain.User, error) {
 	var user domain.User
 	var avatarURL sql.NullString
 	var wechatOpenid sql.NullString
+	var lastLoginAt sql.NullTime
 	err := row.Scan(
 		&user.ID,
 		&user.Email,
@@ -68,6 +74,7 @@ func scanUser(row *sql.Row) (*domain.User, error) {
 		&user.PasswordHash,
 		&wechatOpenid,
 		&user.Status,
+		&lastLoginAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -83,12 +90,15 @@ func scanUser(row *sql.Row) (*domain.User, error) {
 	if avatarURL.Valid {
 		user.AvatarURL = avatarURL.String
 	}
+	if lastLoginAt.Valid {
+		user.LastLoginAt = &lastLoginAt.Time
+	}
 	return &user, nil
 }
 
 func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*domain.User, error) {
 	const query = `
-        select id, email, nickname, avatar_url, password_hash, wechat_openid, status, created_at, updated_at
+        select id, email, nickname, avatar_url, password_hash, wechat_openid, status, last_login_at, created_at, updated_at
         from users where email = $1`
 
 	return scanUser(r.db.QueryRowContext(ctx, query, email))
@@ -96,7 +106,7 @@ func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*domain
 
 func (r *UserRepository) FindByID(ctx context.Context, id string) (*domain.User, error) {
 	const query = `
-        select id, email, nickname, avatar_url, password_hash, wechat_openid, status, created_at, updated_at
+        select id, email, nickname, avatar_url, password_hash, wechat_openid, status, last_login_at, created_at, updated_at
         from users where id = $1`
 
 	return scanUser(r.db.QueryRowContext(ctx, query, id))
@@ -104,7 +114,7 @@ func (r *UserRepository) FindByID(ctx context.Context, id string) (*domain.User,
 
 func (r *UserRepository) FindByWechatOpenid(ctx context.Context, openid string) (*domain.User, error) {
 	const query = `
-        select id, email, nickname, avatar_url, password_hash, wechat_openid, status, created_at, updated_at
+        select id, email, nickname, avatar_url, password_hash, wechat_openid, status, last_login_at, created_at, updated_at
         from users where wechat_openid = $1`
 
 	return scanUser(r.db.QueryRowContext(ctx, query, openid))
@@ -133,4 +143,46 @@ WHERE id = $4`
 		return fmt.Errorf("update wechat profile: %w", err)
 	}
 	return nil
+}
+
+func (r *UserRepository) TouchLastLoginAtDaily(ctx context.Context, userID string) error {
+	const query = `
+update users
+set last_login_at = now(),
+    updated_at = now()
+where id = $1
+  and (
+    last_login_at is null
+    or last_login_at < date_trunc('day', now())
+  )`
+
+	if _, err := r.db.ExecContext(ctx, query, userID); err != nil {
+		return fmt.Errorf("touch last_login_at daily: %w", err)
+	}
+	return nil
+}
+
+func (r *UserRepository) CountLoggedInToday(ctx context.Context) (int, error) {
+	const query = `
+select count(*)
+from users
+where last_login_at >= date_trunc('day', now())`
+
+	var count int
+	if err := r.db.QueryRowContext(ctx, query).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count logged in today: %w", err)
+	}
+	return count, nil
+}
+
+func (r *UserRepository) CountAll(ctx context.Context) (int, error) {
+	const query = `
+select count(*)
+from users`
+
+	var count int
+	if err := r.db.QueryRowContext(ctx, query).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count all users: %w", err)
+	}
+	return count, nil
 }

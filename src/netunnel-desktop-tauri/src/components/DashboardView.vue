@@ -10,7 +10,7 @@ import { createPaymentOrder, pollPaymentOrder, type PaymentOrderSnapshot } from 
 import { fetchUserProfile } from '@/services/users'
 import { useWindowControls } from '@/composables/useWindowControls'
 import { log } from '@/services/logger'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import type { BillingProfile, PricingRule, UserBusinessRecord } from '@/types/netunnel'
 
@@ -36,6 +36,7 @@ const MONTHLY_PAYMENT_PRODUCT_ID = 'cmn1vwkus008v5cdw15hyi1h1'
 const YEARLY_PAYMENT_PRODUCT_ID = 'cmn1vwu70008x5cdwxhf3njnl'
 const PAYMENT_POLL_INTERVAL_MS = 2500
 const workspaceStorageKey = 'netunnel-desktop-tauri-workspace'
+const lastLoginStorageKey = 'netunnel-desktop-tauri-last-login-map'
 const localAgentState = ref({
   running: false,
   executablePath: '',
@@ -43,6 +44,7 @@ const localAgentState = ref({
   lastExit: '',
   registeredAgentId: '',
 })
+const userLastLoginAt = ref('')
 let agentStatusTimer: number | null = null
 let paymentPollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -186,6 +188,8 @@ async function loadSummary() {
     const res = await fetchDashboardSummary(client, store.session.userId)
     log('INFO', `fetchDashboardSummary success: ${JSON.stringify(res.summary)}`)
     store.summary = {
+      totalUsers: res.summary.total_users,
+      onlineUsers: res.summary.online_users,
       onlineAgents: res.summary.online_agents,
       totalAgents: res.summary.total_agents,
       enabledTunnels: res.summary.enabled_tunnels,
@@ -270,6 +274,70 @@ function readWorkspaceAgentId() {
   } catch {
     return ''
   }
+}
+
+function getTodayKey(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function readLastLoginMap(): Record<string, string> {
+  if (typeof window === 'undefined') {
+    return {}
+  }
+  try {
+    const raw = window.localStorage.getItem(lastLoginStorageKey)
+    if (!raw) {
+      return {}
+    }
+    const parsed = JSON.parse(raw) as Record<string, string>
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeLastLoginMap(value: Record<string, string>) {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.localStorage.setItem(lastLoginStorageKey, JSON.stringify(value))
+}
+
+function refreshLastLoginDisplay() {
+  const userID = store.session.userId?.trim()
+  if (!userID) {
+    userLastLoginAt.value = ''
+    return
+  }
+  const loginMap = readLastLoginMap()
+  userLastLoginAt.value = loginMap[userID] ?? ''
+}
+
+function recordDailyLastLogin() {
+  const userID = store.session.userId?.trim()
+  if (!userID || typeof window === 'undefined') {
+    userLastLoginAt.value = ''
+    return
+  }
+
+  const loginMap = readLastLoginMap()
+  const now = new Date()
+  const existing = loginMap[userID]
+  if (existing) {
+    const parsed = new Date(existing)
+    if (!Number.isNaN(parsed.getTime()) && getTodayKey(parsed) === getTodayKey(now)) {
+      userLastLoginAt.value = existing
+      return
+    }
+  }
+
+  const nextValue = now.toISOString()
+  loginMap[userID] = nextValue
+  writeLastLoginMap(loginMap)
+  userLastLoginAt.value = nextValue
 }
 
 async function refreshLocalAgentStatus() {
@@ -671,6 +739,7 @@ function formatPricingRuleLabel(rule: PricingRule) {
 
 onMounted(() => {
   log('INFO', 'DashboardView mounted')
+  recordDailyLastLogin()
   void loadSummary()
   void loadBillingProfile()
   void loadUserProfile()
@@ -688,6 +757,14 @@ onBeforeUnmount(() => {
   }
   stopPaymentPolling()
 })
+
+watch(
+  () => store.session.userId,
+  () => {
+    recordDailyLastLogin()
+    refreshLastLoginDisplay()
+  },
+)
 </script>
 
 <template>
@@ -703,10 +780,13 @@ onBeforeUnmount(() => {
       <div class="flex-1 overflow-auto px-2">
         <div class="space-y-3 py-2">
           <div class="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4">
-            <p class="text-xs text-[var(--text-muted)]">在线 Agent</p>
-            <p class="mt-1 text-xl font-bold">
-              <span v-if="store.summary">{{ store.summary.onlineAgents }} / {{ store.summary.totalAgents }}</span>
-              <span v-else class="text-[var(--text-muted)]">--</span>
+            <p class="text-xs text-[var(--text-muted)]">
+              <span v-if="store.summary">所有用户：{{ store.summary.totalUsers }}</span>
+              <span v-else>所有用户：--</span>
+            </p>
+            <p class="mt-2 text-xs text-[var(--text-soft)]">
+              <span v-if="store.summary">今日活跃用户：{{ store.summary.onlineUsers }}</span>
+              <span v-else>今日活跃用户：--</span>
             </p>
           </div>
 

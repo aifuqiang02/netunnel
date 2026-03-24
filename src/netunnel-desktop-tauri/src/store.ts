@@ -225,7 +225,7 @@ export const useStore = defineStore('main', {
       '桌面端正在基于 Tauri 模板改造为 netunnel 控制台。',
       '当前保留模板登录与设置壳，业务区域对接 netunnel 服务端。',
     ],
-    summary: null as { onlineAgents: number; totalAgents: number; enabledTunnels: number; totalTunnels: number; recentTrafficBytes: number } | null,
+    summary: null as { totalUsers: number; onlineUsers: number; onlineAgents: number; totalAgents: number; enabledTunnels: number; totalTunnels: number; recentTrafficBytes: number } | null,
   }),
 
   getters: {
@@ -334,7 +334,14 @@ export const useStore = defineStore('main', {
         this.isLoginSubmitting = false
       }
     },
-    logout() {
+    async logout() {
+      if (isTauri()) {
+        try {
+          await invoke('stop_local_agent')
+        } catch (error) {
+          log('WARN', `stop_local_agent before logout failed: ${String(error)}`)
+        }
+      }
       this.isAuthenticated = false
       this.isSettingsModalOpen = false
       this.persistSession()

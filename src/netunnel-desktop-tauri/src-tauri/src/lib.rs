@@ -524,6 +524,39 @@ fn sync_agent_process_state(
     }
 }
 
+fn stop_agent_runtime_internal(
+    app: &tauri::AppHandle,
+    logger: &AppLogger,
+    runtime: &AgentRuntime,
+) -> Result<(), String> {
+    let mut guard = runtime
+        .0
+        .lock()
+        .map_err(|_| "无法锁定 agent 运行状态。".to_string())?;
+
+    if let Some(mut child) = guard.child.take() {
+        logger.write("INFO", "停止本地 agent");
+        child.kill().map_err(|error| error.to_string())?;
+        let _ = child.wait();
+        guard.tracked_pid = None;
+        guard.last_exit = Some("agent-run.exe stopped manually".to_string());
+        let _ = clear_persisted_agent_pid(app);
+        return Ok(());
+    }
+
+    if let Some(pid) = guard.tracked_pid.or(read_persisted_agent_pid(app)?) {
+        logger.write("INFO", format!("停止已存在的本地 agent 进程，pid={}", pid));
+        if is_process_alive(pid)? {
+            kill_process(pid)?;
+        }
+        guard.tracked_pid = None;
+        guard.last_exit = Some("agent-run.exe stopped manually".to_string());
+        let _ = clear_persisted_agent_pid(app);
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 fn agent_status(
     app: tauri::AppHandle,
@@ -620,27 +653,12 @@ fn stop_local_agent(
     runtime: tauri::State<'_, AgentRuntime>,
 ) -> Result<AgentStatus, String> {
     let executable_path = local_agent_executable(&app)?;
-    let mut guard = runtime
+    stop_agent_runtime_internal(&app, &logger, &runtime)?;
+
+    let guard = runtime
         .0
         .lock()
         .map_err(|_| "无法锁定 agent 运行状态。".to_string())?;
-
-    if let Some(mut child) = guard.child.take() {
-        logger.write("INFO", "停止本地 agent");
-        child.kill().map_err(|error| error.to_string())?;
-        let _ = child.wait();
-        guard.tracked_pid = None;
-        guard.last_exit = Some("agent-run.exe stopped manually".to_string());
-        let _ = clear_persisted_agent_pid(&app);
-    } else if let Some(pid) = guard.tracked_pid.or(read_persisted_agent_pid(&app)?) {
-        logger.write("INFO", format!("停止已存在的本地 agent 进程，pid={}", pid));
-        if is_process_alive(pid)? {
-            kill_process(pid)?;
-        }
-        guard.tracked_pid = None;
-        guard.last_exit = Some("agent-run.exe stopped manually".to_string());
-        let _ = clear_persisted_agent_pid(&app);
-    }
 
     Ok(AgentStatus {
         running: false,
@@ -898,6 +916,9 @@ pub fn run() {
                         let _ = hide_main_window(app);
                     }
                     "quit" => {
+                        let logger = app.state::<AppLogger>();
+                        let runtime = app.state::<AgentRuntime>();
+                        let _ = stop_agent_runtime_internal(app, &logger, &runtime);
                         app.exit(0);
                     }
                     _ => {}

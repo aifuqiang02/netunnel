@@ -22,10 +22,14 @@ type PortRange struct {
 }
 
 type yamlConfig struct {
-	TCPPortRanges    []PortRange `yaml:"tcp_port_ranges"`
-	PublicHost       string      `yaml:"public_host"`
-	PublicAPIBaseURL string      `yaml:"public_api_base_url"`
-	HostDomainSuffix string      `yaml:"host_domain_suffix"`
+	DatabaseURL        string      `yaml:"database_url"`
+	ListenAddr         string      `yaml:"listen_addr"`
+	BridgeListenAddr   string      `yaml:"bridge_listen_addr"`
+	SettlementInterval string      `yaml:"settlement_interval"`
+	TCPPortRanges      []PortRange `yaml:"tcp_port_ranges"`
+	PublicHost         string      `yaml:"public_host"`
+	PublicAPIBaseURL   string      `yaml:"public_api_base_url"`
+	HostDomainSuffix   string      `yaml:"host_domain_suffix"`
 }
 
 type Config struct {
@@ -44,37 +48,50 @@ func Load() (Config, error) {
 	var cfg Config
 
 	cfg.MigrationsDir = resolveMigrationsDir()
-	databaseURLFlag := flag.String("database-url", envOrDefault("NETUNNEL_DATABASE_URL", defaultDatabaseURL), "PostgreSQL connection string")
 	configPathFlag := flag.String("config", envOrDefault("NETUNNEL_CONFIG", defaultConfigPath), "YAML config file path")
-	listenAddrFlag := flag.String("listen-addr", envOrDefault("NETUNNEL_LISTEN_ADDR", defaultListenAddr), "HTTP listen address")
-	bridgeListenAddrFlag := flag.String("bridge-listen-addr", envOrDefault("NETUNNEL_BRIDGE_LISTEN_ADDR", defaultBridgeListenAddr), "TCP bridge listen address")
-	settlementIntervalFlag := flag.Duration("settlement-interval", envDurationOrDefault("NETUNNEL_SETTLEMENT_INTERVAL", defaultSettlementInterval), "Automatic settlement interval, 0 to disable")
 	flag.Parse()
-
-	cfg.DatabaseURL = *databaseURLFlag
-	cfg.ListenAddr = *listenAddrFlag
-	cfg.BridgeListenAddr = *bridgeListenAddrFlag
-	cfg.SettlementInterval = *settlementIntervalFlag
 
 	yamlPath := *configPathFlag
 	data, err := os.ReadFile(yamlPath)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return Config{}, errors.New("failed to read config file: " + err.Error())
+		if os.IsNotExist(err) {
+			return Config{}, errors.New("config file is required: " + yamlPath)
 		}
-	} else {
-		var yc yamlConfig
-		if err := yaml.Unmarshal(data, &yc); err != nil {
-			return Config{}, errors.New("failed to parse config file: " + err.Error())
+		return Config{}, errors.New("failed to read config file: " + err.Error())
+	}
+
+	var yc yamlConfig
+	if err := yaml.Unmarshal(data, &yc); err != nil {
+		return Config{}, errors.New("failed to parse config file: " + err.Error())
+	}
+
+	cfg.DatabaseURL = yc.DatabaseURL
+	cfg.ListenAddr = yc.ListenAddr
+	cfg.BridgeListenAddr = yc.BridgeListenAddr
+	cfg.TCPPortRanges = yc.TCPPortRanges
+	cfg.PublicHost = yc.PublicHost
+	cfg.PublicAPIBaseURL = yc.PublicAPIBaseURL
+	cfg.HostDomainSuffix = yc.HostDomainSuffix
+
+	if yc.SettlementInterval != "" {
+		parsed, err := time.ParseDuration(yc.SettlementInterval)
+		if err != nil {
+			return Config{}, errors.New("invalid settlement_interval: " + err.Error())
 		}
-		cfg.TCPPortRanges = yc.TCPPortRanges
-		cfg.PublicHost = yc.PublicHost
-		cfg.PublicAPIBaseURL = yc.PublicAPIBaseURL
-		cfg.HostDomainSuffix = yc.HostDomainSuffix
+		cfg.SettlementInterval = parsed
 	}
 
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("database url is required")
+	}
+	if cfg.ListenAddr == "" {
+		cfg.ListenAddr = defaultListenAddr
+	}
+	if cfg.BridgeListenAddr == "" {
+		cfg.BridgeListenAddr = defaultBridgeListenAddr
+	}
+	if cfg.SettlementInterval == 0 {
+		cfg.SettlementInterval = defaultSettlementInterval
 	}
 	if cfg.TCPPortRanges == nil {
 		cfg.TCPPortRanges = []PortRange{{Start: 40000, End: 45000}, {Start: 50000, End: 60000}}
@@ -101,15 +118,6 @@ func resolveMigrationsDir() string {
 func envOrDefault(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
-	}
-	return fallback
-}
-
-func envDurationOrDefault(key string, fallback time.Duration) time.Duration {
-	if value := os.Getenv(key); value != "" {
-		if parsed, err := time.ParseDuration(value); err == nil {
-			return parsed
-		}
 	}
 	return fallback
 }
