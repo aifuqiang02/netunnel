@@ -2,6 +2,7 @@
 import { ElMessage } from 'element-plus'
 import QRCode from 'qrcode'
 import NetunnelWorkspace from '@/components/NetunnelWorkspace.vue'
+import { runtimeEnv } from '@/config/env'
 import SettingsPanel from '@/components/SettingsPanel.vue'
 import { createApiClient } from '@/services/api'
 import { fetchDashboardSummary } from '@/services/dashboard'
@@ -216,8 +217,8 @@ async function autoStartAgent() {
   }
 
   async function launchAgent(machineCode: string) {
-    const serverUrl = store.session.baseUrl || store.settings.homeUrl || 'http://127.0.0.1:40061'
-    const bridgeAddr = store.settings.bridgeAddr || '127.0.0.1:40062'
+    const serverUrl = store.session.baseUrl || store.settings.homeUrl || runtimeEnv.defaultHomeUrl
+    const bridgeAddr = store.settings.bridgeAddr || runtimeEnv.defaultBridgeAddr
     const userId = store.session.userId
     const args = [
       '-server-url', serverUrl,

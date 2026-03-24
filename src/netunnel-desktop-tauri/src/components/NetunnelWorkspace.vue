@@ -3,6 +3,7 @@ import { ElMessage } from 'element-plus'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import { open as openExternal } from '@tauri-apps/plugin-shell'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { runtimeEnv } from '@/config/env'
 import { registerAgent } from '@/services/agents'
 import { createApiClient } from '@/services/api'
 import { manualRecharge, settleBilling } from '@/services/billing'
@@ -124,8 +125,8 @@ const bootstrapForm = reactive({
 
 const agentForm = reactive({
   executablePath: persisted?.agentExecutablePath ?? '',
-  serverUrl: persisted?.agentServerUrl ?? store.settings.homeUrl ?? 'http://127.0.0.1:40061',
-  bridgeAddr: persisted?.agentBridgeAddr ?? store.settings.bridgeAddr ?? '127.0.0.1:40062',
+  serverUrl: persisted?.agentServerUrl ?? store.settings.homeUrl ?? runtimeEnv.defaultHomeUrl,
+  bridgeAddr: persisted?.agentBridgeAddr ?? store.settings.bridgeAddr ?? runtimeEnv.defaultBridgeAddr,
   userId: persisted?.agentUserId ?? store.session.userId ?? '',
   agentName: persisted?.agentName ?? 'desktop-agent',
   machineCode: persisted?.agentMachineCode ?? 'machine-desktop',

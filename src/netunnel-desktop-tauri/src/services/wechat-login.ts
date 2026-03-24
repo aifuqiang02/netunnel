@@ -1,7 +1,7 @@
+import { runtimeEnv } from '@/config/env'
 import type { WechatProfile } from '@/types/auth'
 
-const WECHAT_LOGIN_BASE_URL =
-  'https://open.tx07.cn/api/v1/apps/app_mmzvo9v9e89cc5bbda9611551902/wechat-login'
+const WECHAT_LOGIN_BASE_URL = runtimeEnv.wechatLoginBaseUrl
 
 export interface WechatLoginSession {
   sessionId: string

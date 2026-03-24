@@ -1,5 +1,6 @@
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import { acceptHMRUpdate, defineStore } from 'pinia'
+import { runtimeEnv } from '@/config/env'
 import { completeWechatBusinessLogin, loginWithNetunnel } from '@/services/auth'
 import { log } from '@/services/logger'
 import { resizeMainWindow } from '@/services/window'
@@ -92,6 +93,8 @@ const versionString =
 const AUTO_UPDATE_INTERVAL_MS = 2 * 60 * 60 * 1000
 const SETTINGS_STORAGE_KEY = 'netunnel-desktop-tauri-settings'
 const SESSION_STORAGE_KEY = 'netunnel-desktop-tauri-session'
+const LEGACY_LOCAL_HOME_URL = 'http://127.0.0.1:40061'
+const LEGACY_LOCAL_BRIDGE_ADDR = '127.0.0.1:40062'
 
 let autoUpdateTimer: ReturnType<typeof setInterval> | null = null
 
@@ -142,6 +145,14 @@ function loadPersistedSettings(): Partial<SettingsState> {
 }
 
 const persistedSettings = loadPersistedSettings()
+const persistedHomeUrl =
+  import.meta.env.MODE === 'production' && persistedSettings.homeUrl === LEGACY_LOCAL_HOME_URL
+    ? runtimeEnv.defaultHomeUrl
+    : persistedSettings.homeUrl
+const persistedBridgeAddr =
+  import.meta.env.MODE === 'production' && persistedSettings.bridgeAddr === LEGACY_LOCAL_BRIDGE_ADDR
+    ? runtimeEnv.defaultBridgeAddr
+    : persistedSettings.bridgeAddr
 
 function loadPersistedSession(): Partial<AuthSessionState> & { isAuthenticated?: boolean } {
   if (typeof window === 'undefined') {
@@ -160,6 +171,10 @@ function loadPersistedSession(): Partial<AuthSessionState> & { isAuthenticated?:
 }
 
 const persistedSession = loadPersistedSession()
+const persistedSessionBaseUrl =
+  import.meta.env.MODE === 'production' && persistedSession.baseUrl === LEGACY_LOCAL_HOME_URL
+    ? runtimeEnv.defaultHomeUrl
+    : persistedSession.baseUrl
 
 export const useStore = defineStore('main', {
   state: () => ({
@@ -172,21 +187,21 @@ export const useStore = defineStore('main', {
     currentSession: 'tunnels' as SessionKey,
     layoutMode: 'grid' as LayoutMode,
     loginForm: {
-      username: persistedSession.rememberedUsername ?? 'admin@netunnel.local',
+      username: persistedSession.rememberedUsername ?? runtimeEnv.defaultLoginUsername,
       password: '123456',
       remember: true,
     },
     loginError: '',
     session: {
-      baseUrl: persistedSession.baseUrl ?? persistedSettings.homeUrl ?? 'http://127.0.0.1:40061',
+      baseUrl: persistedSessionBaseUrl ?? persistedHomeUrl ?? runtimeEnv.defaultHomeUrl,
       userId: persistedSession.userId ?? '',
       accessToken: persistedSession.accessToken ?? '',
-      rememberedUsername: persistedSession.rememberedUsername ?? 'admin@netunnel.local',
+      rememberedUsername: persistedSession.rememberedUsername ?? runtimeEnv.defaultLoginUsername,
     } as AuthSessionState,
     user: {
       name: 'Netunnel Admin',
       plan: '开发联调',
-      email: 'admin@netunnel.local',
+      email: runtimeEnv.defaultLoginUsername,
       avatarUrl: '',
     } as UserProfile,
     sessions: [
@@ -199,8 +214,8 @@ export const useStore = defineStore('main', {
       acrylicEnabled: persistedSettings.acrylicEnabled ?? true,
       transparency: persistedSettings.transparency ?? 85,
       launchAtStartup: persistedSettings.launchAtStartup ?? false,
-      homeUrl: persistedSettings.homeUrl ?? 'http://127.0.0.1:40061',
-      bridgeAddr: persistedSettings.bridgeAddr ?? '127.0.0.1:40062',
+      homeUrl: persistedHomeUrl ?? runtimeEnv.defaultHomeUrl,
+      bridgeAddr: persistedBridgeAddr ?? runtimeEnv.defaultBridgeAddr,
       defaultSyncInterval: persistedSettings.defaultSyncInterval ?? '10',
       agentExecutablePath: persistedSettings.agentExecutablePath ?? '',
       closeToTray: persistedSettings.closeToTray ?? true,
