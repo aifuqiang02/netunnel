@@ -6,11 +6,12 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus},
     sync::Mutex,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use chrono::Local;
 use serde::{Deserialize, Serialize};
+use sysinfo::{Pid, ProcessesToUpdate, Signal, System};
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
@@ -20,17 +21,39 @@ use tauri::{
 #[cfg(desktop)]
 use tauri_plugin_updater::UpdaterExt;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 #[derive(Default)]
 struct PendingUpdate(Mutex<Option<tauri_plugin_updater::Update>>);
 
 #[derive(Default)]
 struct AgentRuntime(Mutex<AgentProcessState>);
 
-#[derive(Default)]
 struct AgentProcessState {
     child: Option<Child>,
     tracked_pid: Option<u32>,
     last_exit: Option<String>,
+    last_process_probe: Option<AgentProcessProbeCache>,
+}
+
+#[derive(Clone, Copy)]
+struct AgentProcessProbeCache {
+    checked_at: Instant,
+    tracked_pid: Option<u32>,
+    tracked_alive: bool,
+    detected_pid: Option<u32>,
+}
+
+impl Default for AgentProcessState {
+    fn default() -> Self {
+        Self {
+            child: None,
+            tracked_pid: None,
+            last_exit: None,
+            last_process_probe: None,
+        }
+    }
 }
 
 struct AppLogger {
@@ -66,6 +89,17 @@ impl AppLogger {
         }
     }
 }
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(target_os = "windows")]
+fn configure_background_command(command: &mut Command) {
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn configure_background_command(_command: &mut Command) {}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,10 +160,10 @@ struct PersistedAgentRuntime {
 fn open_in_file_manager(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        Command::new("explorer")
-            .arg(path)
-            .spawn()
-            .map_err(|error| error.to_string())?;
+        let mut command = Command::new("explorer");
+        command.arg(path);
+        configure_background_command(&mut command);
+        command.spawn().map_err(|error| error.to_string())?;
     }
 
     #[cfg(target_os = "macos")]
@@ -395,83 +429,44 @@ fn format_exit_status(status: ExitStatus) -> String {
     }
 }
 
-#[cfg(target_os = "windows")]
 fn is_process_alive(pid: u32) -> Result<bool, String> {
-    let output = Command::new("tasklist")
-        .args([
-            "/FI",
-            &format!("PID eq {}", pid),
-            "/FO",
-            "CSV",
-            "/NH",
-        ])
-        .output()
-        .map_err(|error| error.to_string())?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.contains(&format!("\"{}\"", pid)))
+    let mut system = System::new_all();
+    system.refresh_processes(ProcessesToUpdate::All, true);
+    Ok(system.process(Pid::from_u32(pid)).is_some())
 }
 
-#[cfg(not(target_os = "windows"))]
-fn is_process_alive(pid: u32) -> Result<bool, String> {
-    let status = Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .status()
-        .map_err(|error| error.to_string())?;
-    Ok(status.success())
-}
+fn probe_agent_processes(tracked_pid: Option<u32>) -> (bool, Option<u32>) {
+    let mut system = System::new_all();
+    system.refresh_processes(ProcessesToUpdate::All, true);
 
-#[cfg(target_os = "windows")]
-fn detect_running_agent_pid() -> Result<Option<u32>, String> {
-    let output = Command::new("tasklist")
-        .args(["/FI", "IMAGENAME eq agent-run.exe", "/FO", "CSV", "/NH"])
-        .output()
-        .map_err(|error| error.to_string())?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if !trimmed.starts_with("\"agent-run.exe\",") {
-            continue;
+    let tracked_alive = tracked_pid
+        .map(|pid| system.process(Pid::from_u32(pid)).is_some())
+        .unwrap_or(false);
+
+    let detected_pid = system.processes().iter().find_map(|(pid, process)| {
+        let name = process.name().to_string_lossy().to_ascii_lowercase();
+        if name == "agent-run.exe" || name == "agent-run" {
+            Some(pid.as_u32())
+        } else {
+            None
         }
-        let mut parts = trimmed.split("\",\"");
-        let _name = parts.next();
-        if let Some(pid_part) = parts.next() {
-            if let Ok(pid) = pid_part.trim_matches('"').parse::<u32>() {
-                return Ok(Some(pid));
-            }
+    });
+
+    (tracked_alive, detected_pid)
+}
+
+fn kill_process(pid: u32) -> Result<(), String> {
+    let mut system = System::new_all();
+    system.refresh_processes(ProcessesToUpdate::All, true);
+
+    if let Some(process) = system.process(Pid::from_u32(pid)) {
+        if process.kill_with(Signal::Kill).unwrap_or(false) || process.kill() {
+            return Ok(());
         }
+        return Err(format!("结束进程失败，pid={}", pid));
     }
-    Ok(None)
-}
 
-#[cfg(not(target_os = "windows"))]
-fn detect_running_agent_pid() -> Result<Option<u32>, String> {
-    Ok(None)
-}
-
-#[cfg(target_os = "windows")]
-fn kill_process(pid: u32) -> Result<(), String> {
-    let status = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .status()
-        .map_err(|error| error.to_string())?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("taskkill 失败，pid={}", pid))
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn kill_process(pid: u32) -> Result<(), String> {
-    let status = Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
-        .status()
-        .map_err(|error| error.to_string())?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("kill 失败，pid={}", pid))
-    }
+    Ok(())
 }
 
 fn sync_agent_process_state(
@@ -504,8 +499,33 @@ fn sync_agent_process_state(
             None => read_persisted_agent_pid(app)?,
         };
 
+        let cache_ttl = Duration::from_secs(3);
+        let (tracked_alive, detected_pid) = if let Some(cache) = state.last_process_probe {
+            if cache.tracked_pid == tracked_pid && cache.checked_at.elapsed() < cache_ttl {
+                (cache.tracked_alive, cache.detected_pid)
+            } else {
+                let probe = probe_agent_processes(tracked_pid);
+                state.last_process_probe = Some(AgentProcessProbeCache {
+                    checked_at: Instant::now(),
+                    tracked_pid,
+                    tracked_alive: probe.0,
+                    detected_pid: probe.1,
+                });
+                probe
+            }
+        } else {
+            let probe = probe_agent_processes(tracked_pid);
+            state.last_process_probe = Some(AgentProcessProbeCache {
+                checked_at: Instant::now(),
+                tracked_pid,
+                tracked_alive: probe.0,
+                detected_pid: probe.1,
+            });
+            probe
+        };
+
         if let Some(pid) = tracked_pid {
-            if is_process_alive(pid)? {
+            if tracked_alive {
                 state.tracked_pid = Some(pid);
                 return Ok((true, Some(pid), state.last_exit.clone()));
             }
@@ -513,7 +533,7 @@ fn sync_agent_process_state(
             let _ = clear_persisted_agent_pid(app);
         }
 
-        if let Some(pid) = detect_running_agent_pid()? {
+        if let Some(pid) = detected_pid {
             state.tracked_pid = Some(pid);
             let _ = persist_agent_pid(app, Some(pid));
             logger.write("INFO", format!("检测到已存在的本地 agent 进程，pid={}", pid));
@@ -540,6 +560,7 @@ fn stop_agent_runtime_internal(
         let _ = child.wait();
         guard.tracked_pid = None;
         guard.last_exit = Some("agent-run.exe stopped manually".to_string());
+        guard.last_process_probe = None;
         let _ = clear_persisted_agent_pid(app);
         return Ok(());
     }
@@ -551,6 +572,7 @@ fn stop_agent_runtime_internal(
         }
         guard.tracked_pid = None;
         guard.last_exit = Some("agent-run.exe stopped manually".to_string());
+        guard.last_process_probe = None;
         let _ = clear_persisted_agent_pid(app);
     }
 
@@ -630,11 +652,13 @@ fn start_local_agent(
     if !arguments.is_empty() {
         command.args(&arguments);
     }
+    configure_background_command(&mut command);
     let child = command.spawn().map_err(|error| error.to_string())?;
     let pid = child.id();
     guard.child = Some(child);
     guard.tracked_pid = Some(pid);
     guard.last_exit = None;
+    guard.last_process_probe = None;
     let _ = persist_agent_pid(&app, Some(pid));
 
     Ok(AgentStatus {
