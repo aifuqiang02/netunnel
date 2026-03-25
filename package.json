@@ -1,7 +1,7 @@
 {
   "name": "netunnel",
   "private": true,
-  "version": "2.11.0",
+  "version": "2.11.1",
   "description": "Netunnel Desktop Application",
   "scripts": {
     "dev": "pnpm --filter netunnel-desktop-tauri dev",
