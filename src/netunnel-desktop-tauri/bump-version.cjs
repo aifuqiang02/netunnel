@@ -4,7 +4,6 @@ const fs = require('fs').promises
 const path = require('path')
 // Replace the ESM import with CommonJS require
 const packageJson = require('./package.json')
-const OLD_VERSION = packageJson.version
 
 async function updateVersion() {
   // Check if version argument is provided
@@ -22,7 +21,12 @@ async function updateVersion() {
       const fileContent = await fs.readFile(filePath, 'utf8')
 
       // Create the replacement pattern based on the file type
-      const updatedContent = fileContent.replace(searchPattern(OLD_VERSION), replacement(newVersion))
+      const updatedContent = fileContent.replace(searchPattern(), replacement(newVersion))
+
+      if (updatedContent === fileContent) {
+        console.log(`Warning: ${filename} version pattern not found`)
+        return
+      }
 
       await fs.writeFile(filePath, updatedContent)
       console.log(`Updated ${filename} version to ${newVersion}`)
@@ -37,25 +41,25 @@ async function updateVersion() {
 
   await updateFile(
     'package.json',
-    oldVer => `"version": "${oldVer}"`,
+    () => /"version":\s*"[^\"]+"/,
     newVer => `"version": "${newVer}"`
   )
 
   await updateFile(
     'src-tauri/tauri.conf.json',
-    oldVer => `"version": "${oldVer}"`,
+    () => /"version":\s*"[^\"]+"/,
     newVer => `"version": "${newVer}"`
   )
 
   await updateFile(
     'src-tauri/Cargo.toml',
-    oldVer => `version = "${oldVer}"`,
+    () => /^version = "[^"]+"/m,
     newVer => `version = "${newVer}"`
   )
 
   await updateFile(
     'src-tauri/Cargo.lock',
-    oldVer => `name = "netunnel"\nversion = "${oldVer}"`,
+    () => /name = "netunnel"\r?\nversion = "[^"]+"/,
     newVer => `name = "netunnel"\nversion = "${newVer}"`
   )
 }
