@@ -49,8 +49,6 @@ src/netunnel-desktop/
 .env
 .env.*
 !.env.example
-!src/netunnel-desktop-tauri/.env.development
-!src/netunnel-desktop-tauri/.env.production
 
 # AI conversation logs (personal)
 messages/
@@ -66,6 +64,8 @@ node_modules/
 src/netunnel-agent/.codex-cache/
 
 # Server local config (secrets)
+src/netunnel-server/config.yaml
+src/netunnel-server/config.production.yaml
 src/netunnel-server/config.local.yaml
 
 # NPC related
