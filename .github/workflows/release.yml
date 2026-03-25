@@ -105,12 +105,130 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:
+      - name: Use Node.js
+        uses: actions/setup-node@v6.2.0
+        with:
+          node-version: 24
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
           pattern: bundles-*
           merge-multiple: true
+
+      - name: Generate updater latest.json
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node <<'EOF'
+          const fs = require('fs')
+          const path = require('path')
+
+          const artifactsDir = path.resolve('artifacts')
+          const releaseTag = process.env.RELEASE_TAG
+          const repository = process.env.GITHUB_REPOSITORY
+
+          if (!releaseTag || !/^v\d+\.\d+\.\d+/.test(releaseTag)) {
+            throw new Error(`Expected a version tag like v1.2.3, got: ${releaseTag || '(empty)'}`)
+          }
+
+          const version = releaseTag.replace(/^v/, '')
+          const files = []
+
+          function walk(dir) {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const fullPath = path.join(dir, entry.name)
+              if (entry.isDirectory()) {
+                walk(fullPath)
+                continue
+              }
+              files.push(fullPath)
+            }
+          }
+
+          walk(artifactsDir)
+
+          function toAssetUrl(fileName) {
+            return `https://github.com/${repository}/releases/download/${releaseTag}/${encodeURIComponent(fileName)}`
+          }
+
+          function readSignature(fileName) {
+            const sigPath = files.find((file) => path.basename(file) === fileName)
+            if (!sigPath) {
+              return null
+            }
+            return fs.readFileSync(sigPath, 'utf8').trim()
+          }
+
+          function findAsset(predicate) {
+            return files.find((file) => predicate(path.basename(file)))
+          }
+
+          const platforms = {}
+
+          const windowsBundle =
+            findAsset((name) => name.endsWith('-setup.exe')) ||
+            findAsset((name) => name.endsWith('.msi'))
+
+          if (windowsBundle) {
+            const bundleName = path.basename(windowsBundle)
+            const signature = readSignature(`${bundleName}.sig`)
+            if (!signature) {
+              throw new Error(`Missing signature for Windows bundle: ${bundleName}`)
+            }
+
+            platforms['windows-x86_64'] = {
+              signature,
+              url: toAssetUrl(bundleName),
+            }
+          }
+
+          const macBundle = findAsset((name) => name.endsWith('.app.tar.gz'))
+          if (macBundle) {
+            const bundleName = path.basename(macBundle)
+            const signature = readSignature(`${bundleName}.sig`)
+            if (!signature) {
+              throw new Error(`Missing signature for macOS bundle: ${bundleName}`)
+            }
+
+            platforms['darwin-aarch64'] = {
+              signature,
+              url: toAssetUrl(bundleName),
+            }
+          }
+
+          const linuxBundle = findAsset((name) => name.endsWith('.AppImage'))
+          if (linuxBundle) {
+            const bundleName = path.basename(linuxBundle)
+            const signature = readSignature(`${bundleName}.sig`)
+            if (!signature) {
+              throw new Error(`Missing signature for Linux bundle: ${bundleName}`)
+            }
+
+            platforms['linux-x86_64'] = {
+              signature,
+              url: toAssetUrl(bundleName),
+            }
+          }
+
+          if (Object.keys(platforms).length === 0) {
+            throw new Error('No updater bundles found in downloaded release artifacts')
+          }
+
+          const latestJson = {
+            version,
+            notes: `Release ${releaseTag}`,
+            pub_date: new Date().toISOString(),
+            platforms,
+          }
+
+          const outputPath = path.join(artifactsDir, 'latest.json')
+          fs.writeFileSync(outputPath, `${JSON.stringify(latestJson, null, 2)}\n`)
+          console.log(`Generated ${outputPath}`)
+          console.log(JSON.stringify(latestJson, null, 2))
+          EOF
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
