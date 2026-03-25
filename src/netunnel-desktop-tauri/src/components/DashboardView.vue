@@ -773,7 +773,7 @@ watch(
     <aside class="dashboard-sidebar dashboard-sidebar--compact dashboard-sidebar--design">
       <div class="dashboard-brand">
         <div class="dashboard-brand__icon">
-          <span class="i-mdi-transit-connection-variant text-xl"></span>
+          <img src="/logo.png" alt="Netunnel logo" class="dashboard-brand__logo" />
         </div>
         <h1 class="dashboard-brand__title">Netunnel Desktop</h1>
       </div>

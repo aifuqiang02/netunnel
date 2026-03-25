@@ -1,0 +1,29 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 
+    The logo is a geometric monogram 'N' representing an abstract tunnel flow.
+    It uses sharp, stable geometry to convey professional infrastructure software.
+    The overlapping segments suggest data passing through a secure conduit.
+  -->
+  <path
+    d="M280 240V784H420V460L604 784H744V240H604V564L420 240H280Z"
+    fill="url(#netunnel_gradient)"
+  />
+  <path
+    d="M604 564V240H744V784H604L420 460V784H280V240H420L604 564Z"
+    fill="black"
+    fill-opacity="0.05"
+  />
+  <path
+    d="M420 240L604 564V240H744V412L512 812L280 412V240H420Z"
+    fill="white"
+    fill-opacity="0.1"
+  />
+  <rect x="280" y="240" width="140" height="80" fill="#00D1FF" fill-opacity="0.4" />
+  <rect x="604" y="704" width="140" height="80" fill="#0052CC" fill-opacity="0.4" />
+  <defs>
+    <linearGradient id="netunnel_gradient" x1="280" y1="240" x2="744" y2="784" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00B8D9" />
+      <stop offset="1" stop-color="#0052CC" />
+    </linearGradient>
+  </defs>
+</svg>

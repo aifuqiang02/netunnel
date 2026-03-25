@@ -55,8 +55,8 @@ async function updateVersion() {
 
   await updateFile(
     'src-tauri/Cargo.lock',
-    oldVer => `name = "tauri-app"\nversion = "${oldVer}"`,
-    newVer => `name = "tauri-app"\nversion = "${newVer}"`
+    oldVer => `name = "netunnel"\nversion = "${oldVer}"`,
+    newVer => `name = "netunnel"\nversion = "${newVer}"`
   )
 }
 
