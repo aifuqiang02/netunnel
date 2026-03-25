@@ -1,0 +1,11 @@
+database_url: postgresql://user_RkZXQf:password_zaFR7r@127.0.0.1:5432/netunnel?sslmode=disable
+listen_addr: :40061
+bridge_listen_addr: :40062
+settlement_interval: 1m
+public_host: 110.42.111.221
+public_api_base_url: https://nps1.tx07.cn
+host_domain_suffix: nps1.tx07.cn
+
+tcp_port_ranges:
+  - start: 50000
+    end: 60000
