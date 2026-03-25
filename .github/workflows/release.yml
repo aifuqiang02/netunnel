@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  publish-tauri:
     permissions:
       contents: write
     strategy:
@@ -20,13 +20,10 @@ jobs:
         include:
           - platform: "macos-latest"
             args: "--target aarch64-apple-darwin"
-            target_path: "src-tauri/target/aarch64-apple-darwin/release/bundle"
           - platform: "ubuntu-24.04"
             args: ""
-            target_path: "src-tauri/target/release/bundle"
           - platform: "windows-latest"
             args: ""
-            target_path: "src-tauri/target/release/bundle"
 
     runs-on: ${{ matrix.platform }}
     env:
@@ -37,204 +34,38 @@ jobs:
       - name: Install pnpm + deps
         uses: pnpm/action-setup@v4.2.0
         with:
-          version: 10.0.0
-          run_install: false
+          version: 10
+          run_install: true
 
       - name: Use Node.js
         uses: actions/setup-node@v6.2.0
         with:
           node-version: 24
           cache: "pnpm"
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Install dependencies
-        working-directory: src/netunnel-desktop-tauri
-        run: pnpm install --no-frozen-lockfile
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src/netunnel-desktop-tauri/src-tauri -> target
-
-      - name: Cache Ubuntu build dependencies
+      - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-24.04'
-        uses: awalsh128/cache-apt-pkgs-action@v1.6.0
-        with:
-          packages: libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-          version: ubuntu-24.04-tauri-v1
-          execute_install_scripts: true
-
-      - name: Build Tauri
-        working-directory: src/netunnel-desktop-tauri
-        run: pnpm exec tauri build --config src-tauri/tauri.updater.conf.json ${{ matrix.args }}
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: bundles-${{ matrix.platform }}
-          path: |
-            src/netunnel-desktop-tauri/${{ matrix.target_path }}/**/*.json
-            src/netunnel-desktop-tauri/${{ matrix.target_path }}/**/*.msi
-            src/netunnel-desktop-tauri/${{ matrix.target_path }}/**/*.msi.sig
-            src/netunnel-desktop-tauri/${{ matrix.target_path }}/**/*setup*.exe
-            src/netunnel-desktop-tauri/${{ matrix.target_path }}/**/*.exe.sig
-            src/netunnel-desktop-tauri/${{ matrix.target_path }}/**/*.dmg
-            src/netunnel-desktop-tauri/${{ matrix.target_path }}/**/*.dmg.sig
-            src/netunnel-desktop-tauri/${{ matrix.target_path }}/**/*.deb
-            src/netunnel-desktop-tauri/${{ matrix.target_path }}/**/*.deb.sig
-            src/netunnel-desktop-tauri/${{ matrix.target_path }}/**/*.rpm
-            src/netunnel-desktop-tauri/${{ matrix.target_path }}/**/*.rpm.sig
-            src/netunnel-desktop-tauri/${{ matrix.target_path }}/**/*.AppImage
-            src/netunnel-desktop-tauri/${{ matrix.target_path }}/**/*.AppImage.sig
-            src/netunnel-desktop-tauri/${{ matrix.target_path }}/**/*.tar.gz
-            src/netunnel-desktop-tauri/${{ matrix.target_path }}/**/*.tar.gz.sig
-
-  release:
-    needs: build
-    permissions:
-      contents: write
-    runs-on: ubuntu-24.04
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-    steps:
-      - name: Use Node.js
-        uses: actions/setup-node@v6.2.0
-        with:
-          node-version: 24
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          pattern: bundles-*
-          merge-multiple: true
-
-      - name: Generate updater latest.json
-        env:
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          node <<'EOF'
-          const fs = require('fs')
-          const path = require('path')
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-          const artifactsDir = path.resolve('artifacts')
-          const releaseTag = process.env.RELEASE_TAG
-          const repository = process.env.GITHUB_REPOSITORY
-
-          if (!releaseTag || !/^v\d+\.\d+\.\d+/.test(releaseTag)) {
-            throw new Error(`Expected a version tag like v1.2.3, got: ${releaseTag || '(empty)'}`)
-          }
-
-          const version = releaseTag.replace(/^v/, '')
-          const files = []
-
-          function walk(dir) {
-            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-              const fullPath = path.join(dir, entry.name)
-              if (entry.isDirectory()) {
-                walk(fullPath)
-                continue
-              }
-              files.push(fullPath)
-            }
-          }
-
-          walk(artifactsDir)
-
-          function toAssetUrl(fileName) {
-            return `https://github.com/${repository}/releases/download/${releaseTag}/${encodeURIComponent(fileName)}`
-          }
-
-          function readSignature(fileName) {
-            const sigPath = files.find((file) => path.basename(file) === fileName)
-            if (!sigPath) {
-              return null
-            }
-            return fs.readFileSync(sigPath, 'utf8').trim()
-          }
-
-          function findAsset(predicate) {
-            return files.find((file) => predicate(path.basename(file)))
-          }
-
-          const platforms = {}
-
-          const windowsBundle =
-            findAsset((name) => name.endsWith('-setup.exe')) ||
-            findAsset((name) => name.endsWith('.msi'))
-
-          if (windowsBundle) {
-            const bundleName = path.basename(windowsBundle)
-            const signature = readSignature(`${bundleName}.sig`)
-            if (!signature) {
-              throw new Error(`Missing signature for Windows bundle: ${bundleName}`)
-            }
-
-            platforms['windows-x86_64'] = {
-              signature,
-              url: toAssetUrl(bundleName),
-            }
-          }
-
-          const macBundle = findAsset((name) => name.endsWith('.app.tar.gz'))
-          if (macBundle) {
-            const bundleName = path.basename(macBundle)
-            const signature = readSignature(`${bundleName}.sig`)
-            if (!signature) {
-              throw new Error(`Missing signature for macOS bundle: ${bundleName}`)
-            }
-
-            platforms['darwin-aarch64'] = {
-              signature,
-              url: toAssetUrl(bundleName),
-            }
-          }
-
-          const linuxBundle = findAsset((name) => name.endsWith('.AppImage'))
-          if (linuxBundle) {
-            const bundleName = path.basename(linuxBundle)
-            const signature = readSignature(`${bundleName}.sig`)
-            if (!signature) {
-              throw new Error(`Missing signature for Linux bundle: ${bundleName}`)
-            }
-
-            platforms['linux-x86_64'] = {
-              signature,
-              url: toAssetUrl(bundleName),
-            }
-          }
-
-          if (Object.keys(platforms).length === 0) {
-            throw new Error('No updater bundles found in downloaded release artifacts')
-          }
-
-          const latestJson = {
-            version,
-            notes: `Release ${releaseTag}`,
-            pub_date: new Date().toISOString(),
-            platforms,
-          }
-
-          const outputPath = path.join(artifactsDir, 'latest.json')
-          fs.writeFileSync(outputPath, `${JSON.stringify(latestJson, null, 2)}\n`)
-          console.log(`Generated ${outputPath}`)
-          console.log(JSON.stringify(latestJson, null, 2))
-          EOF
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/**/*
-          draft: false
-          prerelease: false
+      - uses: tauri-apps/tauri-action@action-v0.5.20
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: src/netunnel-desktop-tauri
+          tauriScript: pnpm exec tauri
+          tagName: v__VERSION__
+          releaseName: "v__VERSION__"
+          releaseBody: "See the repository changelog and release assets for this version."
+          releaseDraft: false
+          prerelease: false
+          updaterJsonPreferNsis: true
+          args: ${{ matrix.args }} --config src-tauri/tauri.updater.conf.json
