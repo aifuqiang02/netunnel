@@ -66,6 +66,14 @@ const updaterDescription = computed(() => {
     return '正在下载并安装更新，请稍候。安装完成后应用会自动重启。'
   }
 
+  if (store.updater.available?.downloading) {
+    return `已发现新版本 v${store.updater.available.version}，正在后台下载更新包。下载完成后可直接安装。`
+  }
+
+  if (store.updater.available?.readyToInstall) {
+    return `新版本 v${store.updater.available.version} 已准备就绪，点击即可直接安装。`
+  }
+
   if (store.updater.checking) {
     return '正在检查 GitHub Release 中的新版本，请稍候。'
   }
@@ -94,12 +102,16 @@ const updaterButtonLabel = computed(() => {
     return '正在安装...'
   }
 
+  if (store.updater.available?.downloading) {
+    return '后台下载中...'
+  }
+
   if (store.updater.checking) {
     return '检查中...'
   }
 
   if (store.updater.available) {
-    return `安装 v${store.updater.available.version}`
+    return store.updater.available.readyToInstall ? `安装 v${store.updater.available.version}` : '准备更新...'
   }
 
   return '检查更新'
@@ -263,11 +275,22 @@ onMounted(() => {
                       {{ updaterProgressLabel }}
                     </p>
                   </div>
+                  <div v-else-if="store.updater.available?.downloading" class="space-y-2 rounded-2xl bg-[var(--surface-secondary)] px-4 py-3">
+                    <div class="h-2 overflow-hidden rounded-full bg-black/6">
+                      <div
+                        class="h-full rounded-full bg-[var(--brand)] transition-[width] duration-300 ease-out"
+                        :style="{ width: `${updaterProgressPercent}%` }"
+                      ></div>
+                    </div>
+                    <p class="text-sm leading-6 text-[var(--text-soft)]">
+                      {{ updaterProgressLabel }}
+                    </p>
+                  </div>
                 </div>
 
                 <button
                   class="settings-save-button shrink-0"
-                  :disabled="(!store.updater.enabled && !store.updater.available) || store.updater.checking || store.updater.installing"
+                  :disabled="(!store.updater.enabled && !store.updater.available) || store.updater.checking || store.updater.installing || Boolean(store.updater.available?.downloading)"
                   type="button"
                   @click="handleUpdaterAction"
                 >

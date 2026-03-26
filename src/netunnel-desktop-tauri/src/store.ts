@@ -64,6 +64,8 @@ interface UpdatePayload {
   currentVersion: string
   date: string | null
   body: string | null
+  readyToInstall: boolean
+  downloading: boolean
 }
 
 interface UpdaterState {
@@ -83,10 +85,11 @@ interface UpdaterState {
 }
 
 interface UpdateProgressPayload {
-  phase: 'downloading' | 'installing'
+  phase: 'idle' | 'downloading' | 'downloaded' | 'installing' | 'failed'
   downloadedBytes: number
   totalBytes: number | null
   percent: number | null
+  error: string | null
 }
 
 interface LogStatusPayload {
@@ -554,14 +557,15 @@ export const useStore = defineStore('main', {
 
       this.updater.checking = true
       this.updater.lastError = null
+      this.resetUpdaterProgress()
 
       try {
         const update = await invoke<UpdatePayload | null>('check_for_update')
         this.updater.available = update
         this.updater.lastCheckedAt = new Date().toISOString()
-        this.updater.promptVisible = Boolean(update)
+        this.updater.promptVisible = Boolean(update?.readyToInstall)
 
-        if (update && options?.background) {
+        if (update?.readyToInstall && options?.background) {
           const message = `发现新版本 v${update.version}，可在设置中安装更新。`
           if (!this.notifications.includes(message)) {
             this.notifications.unshift(message)
@@ -609,10 +613,41 @@ export const useStore = defineStore('main', {
 
       updaterProgressUnlisten = await listen<UpdateProgressPayload>('updater://progress', (event) => {
         const payload = event.payload
-        this.updater.progressPhase = payload.phase
+        this.updater.progressPhase = payload.phase === 'downloaded' || payload.phase === 'failed' ? 'idle' : payload.phase
         this.updater.downloadedBytes = payload.downloadedBytes
         this.updater.totalBytes = payload.totalBytes
         this.updater.progressPercent = payload.percent === null ? null : Math.round(payload.percent)
+        if (payload.error) {
+          this.updater.lastError = payload.error
+        }
+        if (this.updater.available) {
+          if (payload.phase === 'downloaded') {
+            this.updater.available = {
+              ...this.updater.available,
+              downloading: false,
+              readyToInstall: true,
+            }
+            this.updater.promptVisible = true
+            const message = `发现新版本 v${this.updater.available.version}，可在设置中安装更新。`
+            if (!this.notifications.includes(message)) {
+              this.notifications.unshift(message)
+            }
+          } else if (payload.phase === 'downloading') {
+            this.updater.available = {
+              ...this.updater.available,
+              downloading: true,
+              readyToInstall: false,
+            }
+            this.updater.promptVisible = false
+          } else if (payload.phase === 'failed') {
+            this.updater.available = {
+              ...this.updater.available,
+              downloading: false,
+              readyToInstall: false,
+            }
+            this.updater.promptVisible = false
+          }
+        }
       })
     },
     dismissUpdatePrompt() {

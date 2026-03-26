@@ -24,8 +24,7 @@ use tauri_plugin_updater::UpdaterExt;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-#[derive(Default)]
-struct PendingUpdate(Mutex<Option<tauri_plugin_updater::Update>>);
+struct PendingUpdate(Mutex<PendingUpdateState>);
 
 #[derive(Default)]
 struct AgentRuntime(Mutex<AgentProcessState>);
@@ -60,6 +59,19 @@ struct AppLogger {
     directory: PathBuf,
     file_path: PathBuf,
     file: Mutex<File>,
+}
+
+#[derive(Default)]
+struct PendingUpdateState {
+    update: Option<tauri_plugin_updater::Update>,
+    downloaded_bytes: Option<Vec<u8>>,
+    downloading: bool,
+}
+
+impl Default for PendingUpdate {
+    fn default() -> Self {
+        Self(Mutex::new(PendingUpdateState::default()))
+    }
 }
 
 const GITHUB_RELEASE_ACCELERATOR_PREFIX: &str = "https://git.aifuqiang.win/";
@@ -120,6 +132,8 @@ struct UpdatePayload {
     current_version: String,
     date: Option<String>,
     body: Option<String>,
+    ready_to_install: bool,
+    downloading: bool,
 }
 
 #[derive(Serialize)]
@@ -136,6 +150,7 @@ struct UpdateProgressPayload {
     downloaded_bytes: u64,
     total_bytes: Option<u64>,
     percent: Option<f64>,
+    error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -441,6 +456,147 @@ fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
 
 fn emit_update_progress(app: &tauri::AppHandle, payload: UpdateProgressPayload) {
     let _ = app.emit(UPDATER_PROGRESS_EVENT, payload);
+}
+
+fn same_pending_update(
+    existing: &tauri_plugin_updater::Update,
+    version: &str,
+    download_url: &str,
+) -> bool {
+    existing.version.to_string() == version && existing.download_url.as_str() == download_url
+}
+
+fn spawn_update_download(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let logger = app.state::<AppLogger>();
+        let (update, expected_version, expected_url) = {
+            let pending_update = app.state::<PendingUpdate>();
+            let mut pending = match pending_update.0.lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    logger.write("ERROR", "无法锁定待下载更新状态。");
+                    return;
+                }
+            };
+
+            if pending.downloaded_bytes.is_some() || pending.downloading {
+                return;
+            }
+
+            let Some(update) = pending.update.clone() else {
+                return;
+            };
+
+            let expected_version = update.version.to_string();
+            let expected_url = update.download_url.to_string();
+            pending.downloading = true;
+            (
+                update,
+                expected_version,
+                expected_url,
+            )
+        };
+
+        logger.write(
+            "INFO",
+            format!("开始后台下载更新包: latest={}", expected_version),
+        );
+        emit_update_progress(
+            &app,
+            UpdateProgressPayload {
+                phase: "downloading".to_string(),
+                downloaded_bytes: 0,
+                total_bytes: None,
+                percent: Some(0.0),
+                error: None,
+            },
+        );
+
+        let downloaded_bytes = Arc::new(AtomicU64::new(0));
+        let progress_downloaded_bytes = Arc::clone(&downloaded_bytes);
+
+        let result = update
+            .download(
+                |chunk_length, content_length| {
+                    let downloaded_bytes =
+                        progress_downloaded_bytes.fetch_add(chunk_length as u64, Ordering::Relaxed) + chunk_length as u64;
+                    let percent = content_length
+                        .filter(|total| *total > 0)
+                        .map(|total| (downloaded_bytes as f64 / total as f64) * 100.0)
+                        .map(|value| value.clamp(0.0, 100.0));
+
+                    emit_update_progress(
+                        &app,
+                        UpdateProgressPayload {
+                            phase: "downloading".to_string(),
+                            downloaded_bytes,
+                            total_bytes: content_length,
+                            percent,
+                            error: None,
+                        },
+                    );
+                },
+                || {},
+            )
+            .await;
+
+        let pending_update = app.state::<PendingUpdate>();
+        let mut pending = match pending_update.0.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                logger.write("ERROR", "无法锁定待下载更新状态。");
+                return;
+            }
+        };
+
+        let Some(current_update) = pending.update.as_ref() else {
+            pending.downloading = false;
+            return;
+        };
+
+        if !same_pending_update(current_update, &expected_version, &expected_url) {
+            pending.downloading = false;
+            return;
+        }
+
+        pending.downloading = false;
+
+        match result {
+            Ok(bytes) => {
+                let bytes_len = bytes.len() as u64;
+                pending.downloaded_bytes = Some(bytes);
+                logger.write(
+                    "INFO",
+                    format!("更新包后台下载完成: latest={}, bytes={bytes_len}", expected_version),
+                );
+                emit_update_progress(
+                    &app,
+                    UpdateProgressPayload {
+                        phase: "downloaded".to_string(),
+                        downloaded_bytes: bytes_len,
+                        total_bytes: Some(bytes_len),
+                        percent: Some(100.0),
+                        error: None,
+                    },
+                );
+            }
+            Err(error) => {
+                let message = error.to_string();
+                pending.downloaded_bytes = None;
+                logger.write("ERROR", format!("后台下载更新包失败: {message}"));
+                emit_update_progress(
+                    &app,
+                    UpdateProgressPayload {
+                        phase: "failed".to_string(),
+                        downloaded_bytes: downloaded_bytes.load(Ordering::Relaxed),
+                        total_bytes: None,
+                        percent: None,
+                        error: Some(message),
+                    },
+                );
+            }
+        }
+    });
 }
 
 fn hide_main_window(app: &tauri::AppHandle) -> Result<(), String> {
@@ -926,29 +1082,89 @@ async fn check_for_update(
             update
         });
 
-    let payload = update.as_ref().map(|update| UpdatePayload {
-        version: update.version.to_string(),
-        current_version: update.current_version.to_string(),
-        date: update.date.map(|date| date.to_string()),
-        body: update.body.clone(),
-    });
+    let payload = {
+        let mut pending = pending_update
+            .0
+            .lock()
+            .map_err(|_| "无法锁定待安装更新状态。".to_string())?;
 
-    let mut pending = pending_update
-        .0
-        .lock()
-        .map_err(|_| "无法锁定待安装更新状态。".to_string())?;
-    *pending = update;
+        let previous_update = pending
+            .update
+            .as_ref()
+            .map(|update| (update.version.to_string(), update.download_url.to_string()));
 
-    if let Some(update) = pending.as_ref() {
+        pending.update = update;
+
+        let payload = if let Some(update) = pending.update.as_ref() {
+            let version = update.version.to_string();
+            let current_version = update.current_version.to_string();
+            let date = update.date.map(|date| date.to_string());
+            let body = update.body.clone();
+            let download_url = update.download_url.to_string();
+            let same_update = previous_update
+                .as_ref()
+                .is_some_and(|(previous_version, previous_url)| {
+                    previous_version == &version && previous_url == &download_url
+                });
+
+            if !same_update {
+                pending.downloaded_bytes = None;
+                pending.downloading = false;
+            }
+
+            Some(UpdatePayload {
+                version,
+                current_version,
+                date,
+                body,
+                ready_to_install: pending.downloaded_bytes.is_some(),
+                downloading: pending.downloading,
+            })
+        } else {
+            pending.downloaded_bytes = None;
+            pending.downloading = false;
+            emit_update_progress(
+                &app,
+                UpdateProgressPayload {
+                    phase: "idle".to_string(),
+                    downloaded_bytes: 0,
+                    total_bytes: None,
+                    percent: None,
+                    error: None,
+                },
+            );
+            None
+        };
+
+        if let Some(update) = pending.update.as_ref() {
+            logger.write(
+                "INFO",
+                format!(
+                    "发现新版本: current={}, latest={}",
+                    update.current_version, update.version
+                ),
+            );
+        } else {
+            logger.write("INFO", "未发现可用更新");
+        }
+
+        payload
+    };
+
+    if let Some(update) = payload.as_ref() {
         logger.write(
             "INFO",
             format!(
-                "发现新版本: current={}, latest={}",
-                update.current_version, update.version
+                "更新状态: latest={}, downloading={}, ready_to_install={}",
+                update.version, update.downloading, update.ready_to_install
             ),
         );
-    } else {
-        logger.write("INFO", "未发现可用更新");
+    }
+
+    if let Some(update) = payload.as_ref() {
+        if !update.ready_to_install && !update.downloading {
+            spawn_update_download(app.clone());
+        }
     }
 
     Ok(payload)
@@ -961,16 +1177,24 @@ async fn install_update(
     runtime: tauri::State<'_, AgentRuntime>,
 ) -> Result<(), String> {
     let logger = app.state::<AppLogger>();
-    let update = {
+    let (update, downloaded_package, downloading) = {
         let mut pending = pending_update
             .0
             .lock()
             .map_err(|_| "无法锁定待安装更新状态。".to_string())?;
 
-        pending
-            .take()
-            .ok_or_else(|| "当前没有可安装的更新，请先执行一次检查更新。".to_string())?
+        (
+            pending.update.clone(),
+            pending.downloaded_bytes.take(),
+            pending.downloading,
+        )
     };
+
+    if downloading {
+        return Err("新版本正在后台下载，请稍候下载完成后再安装。".to_string());
+    }
+
+    let update = update.ok_or_else(|| "当前没有可安装的更新，请先执行一次检查更新。".to_string())?;
 
     logger.write(
         "INFO",
@@ -987,58 +1211,86 @@ async fn install_update(
         message
     })?;
 
-    emit_update_progress(
-        &app,
-        UpdateProgressPayload {
-            phase: "downloading".to_string(),
-            downloaded_bytes: 0,
-            total_bytes: None,
-            percent: Some(0.0),
-        },
-    );
-
-    let downloaded_bytes = Arc::new(AtomicU64::new(0));
-    let progress_downloaded_bytes = Arc::clone(&downloaded_bytes);
-    let finish_downloaded_bytes = Arc::clone(&downloaded_bytes);
-    update
-        .download_and_install(
-            |chunk_length, content_length| {
-                let downloaded_bytes =
-                    progress_downloaded_bytes.fetch_add(chunk_length as u64, Ordering::Relaxed) + chunk_length as u64;
-                let percent = content_length
-                    .filter(|total| *total > 0)
-                    .map(|total| (downloaded_bytes as f64 / total as f64) * 100.0)
-                    .map(|value| value.clamp(0.0, 100.0));
-
-                emit_update_progress(
-                    &app,
-                    UpdateProgressPayload {
-                        phase: "downloading".to_string(),
-                        downloaded_bytes,
-                        total_bytes: content_length,
-                        percent,
-                    },
-                );
+    let install_result = if let Some(bytes) = downloaded_package {
+        let bytes_len = bytes.len() as u64;
+        logger.write("INFO", format!("使用已下载的更新包直接安装: bytes={bytes_len}"));
+        emit_update_progress(
+            &app,
+            UpdateProgressPayload {
+                phase: "installing".to_string(),
+                downloaded_bytes: bytes_len,
+                total_bytes: Some(bytes_len),
+                percent: Some(100.0),
+                error: None,
             },
-            || {
-                let downloaded_bytes = finish_downloaded_bytes.load(Ordering::Relaxed);
-                emit_update_progress(
-                    &app,
-                    UpdateProgressPayload {
-                        phase: "installing".to_string(),
-                        downloaded_bytes,
-                        total_bytes: Some(downloaded_bytes),
-                        percent: Some(100.0),
-                    },
-                );
+        );
+        update.install(bytes)
+    } else {
+        logger.write("INFO", "未命中已下载更新包，回退为下载后安装");
+        emit_update_progress(
+            &app,
+            UpdateProgressPayload {
+                phase: "downloading".to_string(),
+                downloaded_bytes: 0,
+                total_bytes: None,
+                percent: Some(0.0),
+                error: None,
             },
-        )
-        .await
-        .map_err(|error| {
-            let message = error.to_string();
-            logger.write("ERROR", format!("安装更新失败: {message}"));
-            message
-        })?;
+        );
+
+        let downloaded_bytes = Arc::new(AtomicU64::new(0));
+        let progress_downloaded_bytes = Arc::clone(&downloaded_bytes);
+        let finish_downloaded_bytes = Arc::clone(&downloaded_bytes);
+        update
+            .download_and_install(
+                |chunk_length, content_length| {
+                    let downloaded_bytes = progress_downloaded_bytes
+                        .fetch_add(chunk_length as u64, Ordering::Relaxed)
+                        + chunk_length as u64;
+                    let percent = content_length
+                        .filter(|total| *total > 0)
+                        .map(|total| (downloaded_bytes as f64 / total as f64) * 100.0)
+                        .map(|value| value.clamp(0.0, 100.0));
+
+                    emit_update_progress(
+                        &app,
+                        UpdateProgressPayload {
+                            phase: "downloading".to_string(),
+                            downloaded_bytes,
+                            total_bytes: content_length,
+                            percent,
+                            error: None,
+                        },
+                    );
+                },
+                || {
+                    let downloaded_bytes = finish_downloaded_bytes.load(Ordering::Relaxed);
+                    emit_update_progress(
+                        &app,
+                        UpdateProgressPayload {
+                            phase: "installing".to_string(),
+                            downloaded_bytes,
+                            total_bytes: Some(downloaded_bytes),
+                            percent: Some(100.0),
+                            error: None,
+                        },
+                    );
+                },
+            )
+            .await
+    };
+
+    install_result.map_err(|error| {
+        let message = error.to_string();
+        logger.write("ERROR", format!("安装更新失败: {message}"));
+        message
+    })?;
+
+    if let Ok(mut pending) = pending_update.0.lock() {
+        pending.update = None;
+        pending.downloaded_bytes = None;
+        pending.downloading = false;
+    }
 
     logger.write("INFO", "更新安装完成，准备重启应用");
     app.restart();
