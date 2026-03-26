@@ -328,6 +328,20 @@ fn app_log_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir.join("logs"))
 }
 
+fn agent_candidate_paths(root: &Path) -> Vec<PathBuf> {
+    vec![
+        root.join("agent-run.exe"),
+        root.join("netunnel-agent").join("agent-run.exe"),
+        root.join("_up_").join("agent-run.exe"),
+        root.join("_up_").join("netunnel-agent").join("agent-run.exe"),
+        root.join("_up_").join("_up_").join("agent-run.exe"),
+        root.join("_up_")
+            .join("_up_")
+            .join("netunnel-agent")
+            .join("agent-run.exe"),
+    ]
+}
+
 fn local_agent_executable(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let mut search_roots = Vec::new();
 
@@ -353,20 +367,13 @@ fn local_agent_executable(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     for root in &search_roots {
         let mut current = root.clone();
         for _ in 0..8 {
-            let direct_candidate = current.join("agent-run.exe");
-            if direct_candidate.exists() {
-                return Ok(direct_candidate);
+            for candidate in agent_candidate_paths(&current) {
+                if candidate.exists() {
+                    return Ok(candidate);
+                }
             }
 
-            let nested_candidate = current.join("netunnel-agent").join("agent-run.exe");
-            if nested_candidate.exists() {
-                return Ok(nested_candidate);
-            }
-
-            let src_candidate = current
-                .join("src")
-                .join("netunnel-agent")
-                .join("agent-run.exe");
+            let src_candidate = current.join("src").join("netunnel-agent").join("agent-run.exe");
             if src_candidate.exists() {
                 return Ok(src_candidate);
             }
@@ -381,6 +388,7 @@ fn local_agent_executable(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .first()
         .cloned()
         .unwrap_or_else(|| PathBuf::from("."))
+        .join("netunnel-agent")
         .join("agent-run.exe");
     Ok(fallback)
 }
