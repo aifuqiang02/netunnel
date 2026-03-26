@@ -319,8 +319,21 @@ fn clear_persisted_agent_pid(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn app_log_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Ok(dir) = app.path().app_log_dir() {
+        return Ok(dir);
+    }
+
+    let data_dir = app.path().app_data_dir().map_err(|error| error.to_string())?;
+    Ok(data_dir.join("logs"))
+}
+
 fn local_agent_executable(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let mut search_roots = Vec::new();
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        search_roots.push(resource_dir);
+    }
 
     if let Ok(dir) = app.path().executable_dir() {
         search_roots.push(dir);
@@ -332,16 +345,13 @@ fn local_agent_executable(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         }
     }
 
+    #[cfg(debug_assertions)]
     if let Ok(dir) = env::current_dir() {
         search_roots.push(dir);
     }
 
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        search_roots.push(resource_dir);
-    }
-
-    for root in search_roots {
-        let mut current = root;
+    for root in &search_roots {
+        let mut current = root.clone();
         for _ in 0..8 {
             let direct_candidate = current.join("agent-run.exe");
             if direct_candidate.exists() {
@@ -367,9 +377,11 @@ fn local_agent_executable(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         }
     }
 
-    let fallback = env::current_dir()
-        .map(|dir| dir.join("src").join("netunnel-agent").join("agent-run.exe"))
-        .unwrap_or_else(|_| PathBuf::from("src").join("netunnel-agent").join("agent-run.exe"));
+    let fallback = search_roots
+        .first()
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("agent-run.exe");
     Ok(fallback)
 }
 
@@ -931,7 +943,7 @@ pub fn run() {
         .manage(PendingUpdate::default())
         .manage(AgentRuntime::default())
         .setup(|app| {
-            let log_dir = PathBuf::from("D:\\git-projects\\ai-company\\projects\\netunnel\\src\\netunnel-desktop-tauri\\logs");
+            let log_dir = app_log_directory(app.handle())?;
             let logger = AppLogger::new(log_dir)?;
             logger.write("INFO", "应用启动");
             app.manage(logger);

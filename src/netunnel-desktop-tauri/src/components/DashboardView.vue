@@ -220,6 +220,7 @@ async function autoStartAgent() {
     const serverUrl = store.session.baseUrl || store.settings.homeUrl || runtimeEnv.defaultHomeUrl
     const bridgeAddr = store.settings.bridgeAddr || runtimeEnv.defaultBridgeAddr
     const userId = store.session.userId
+    const executablePath = store.settings.agentExecutablePath?.trim() || undefined
     const args = [
       '-server-url', serverUrl,
       '-bridge-addr', bridgeAddr,
@@ -230,11 +231,10 @@ async function autoStartAgent() {
       '-os-type', 'windows',
       '-sync-interval', '10',
     ]
-    const agentExe = 'D:/git-projects/ai-company/projects/netunnel/src/netunnel-agent/agent-run.exe'
     log('INFO', `autoStartAgent: starting agent with args: ${JSON.stringify(args)}`)
     await invoke('start_local_agent', {
       input: {
-        executablePath: agentExe,
+        executablePath,
         arguments: args,
       },
     })
