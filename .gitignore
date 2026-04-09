@@ -22,9 +22,6 @@ build/
 *.egg-info/
 .codex-cache
 
-# Node modules (for old netunnel-desktop prototype if it has pnpm)
-src/netunnel-desktop/node_modules/
-
 # Certificates (local dev only)
 tools/*.pem
 tools/*.pfx
@@ -42,9 +39,6 @@ Thumbs.db
 # Tauri
 src/netunnel-desktop-tauri/src-tauri/target/
 src/netunnel-desktop-tauri/node_modules/
-
-# Old prototype (废弃)
-src/netunnel-desktop/
 
 # Env files with secrets
 .env
