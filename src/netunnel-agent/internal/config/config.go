@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	defaultServerURL    = "http://151.245.90.96:40061"
-	defaultBridgeAddr   = "151.245.90.96:40062"
+	defaultServerURL    = "http://101.43.49.100:40061"
+	defaultBridgeAddr   = "101.43.49.100:40062"
 	defaultAgentName    = "local-agent"
 	defaultMachineCode  = "machine-local"
 	defaultClientVer    = "0.1.0"

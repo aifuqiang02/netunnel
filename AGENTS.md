@@ -148,13 +148,71 @@ internal/
 ## 环境变量
 
 桌面端使用 Vite，默认前缀 `VITE_` / `TAURI_`。关键环境变量：
-- `VITE_DEFAULT_HOME_URL` — 桌面端默认服务地址（当前 `http://151.245.90.96:40061`）
-- `VITE_DEFAULT_BRIDGE_ADDR` — 桌面端默认 Bridge 地址（当前 `151.245.90.96:40062`）
+- `VITE_DEFAULT_HOME_URL` — 桌面端默认服务地址（生产当前应为 `https://nps1.tx07.cn`）
+- `VITE_DEFAULT_BRIDGE_ADDR` — 桌面端默认 Bridge 地址（生产当前为 `101.43.49.100:40062`）
 
 服务端使用环境变量或 `config.yaml`，关键变量:
 - `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
 - `SERVER_PORT` (默认 40061)
 - `BRIDGE_PORT` (默认 40062)
+
+### 生产环境中 IP 与域名的职责划分
+
+以后替换服务器 IP 时，先区分“连接服务器的地址”与“对外暴露给用户的域名”，不要混改。
+
+#### 应该使用 IP 的位置
+
+- `deploy/deploy.config.mjs` 的 `ssh.host`
+  - 作用：部署脚本 SSH 登录服务器
+  - 当前值：`101.43.49.100`
+- `src/netunnel-desktop-tauri/.env.production` 的 `VITE_DEFAULT_BRIDGE_ADDR`
+  - 作用：桌面端连接 Agent Bridge TCP 入口
+  - 当前值：`101.43.49.100:40062`
+- 服务端生产配置里的 `public_host`
+  - 文件位置：线上实际生效文件是 `/www/wwwroot/netunnel/shared/config.yaml`
+  - 仓库发布源文件：`src/netunnel-server/config.production.yaml`
+  - 作用：TCP 隧道访问地址，例如 `101.43.49.100:50001`
+  - 当前值：`101.43.49.100`
+
+#### 应该使用域名的位置
+
+- `src/netunnel-desktop-tauri/.env.production` 的 `VITE_DEFAULT_HOME_URL`
+  - 作用：桌面端默认 API / Web 入口
+  - 当前值：`https://nps1.tx07.cn`
+- 服务端生产配置里的 `public_api_base_url`
+  - 文件位置：线上实际生效文件是 `/www/wwwroot/netunnel/shared/config.yaml`
+  - 仓库发布源文件：`src/netunnel-server/config.production.yaml`
+  - 作用：服务端对外生成支付回调、平台访问基址等 HTTP API 地址
+  - 当前值：`https://nps1.tx07.cn`
+- 服务端生产配置里的 `host_domain_suffix`
+  - 文件位置：线上实际生效文件是 `/www/wwwroot/netunnel/shared/config.yaml`
+  - 仓库发布源文件：`src/netunnel-server/config.production.yaml`
+  - 作用：生成域名内网穿透地址后缀，后端按 `前缀 + "." + host_domain_suffix` 拼接
+  - 当前值：`nps1.tx07.cn`
+- Nginx 站点模板 `deploy/nginx/nps1.tx07.cn.conf`
+  - 作用：公网域名 `nps1.tx07.cn` 与 `*.nps1.tx07.cn` 转发到后端 `127.0.0.1:40061`
+
+#### 本次问题的根因
+
+- 错误做法：把 `host_domain_suffix` 从 `nps1.tx07.cn` 改成了 `151.245.90.96`
+- 结果：域名内网穿透被生成为 `https://a1775718020.151.245.90.96`
+- 正确做法：
+  - 只在 SSH、Bridge、`public_host` 这类“连接服务器或 TCP 入口”的配置里替换 IP
+  - 不要改 `VITE_DEFAULT_HOME_URL`、`public_api_base_url`、`host_domain_suffix` 这类“对外域名入口”配置，除非业务上真的切换了主域名
+
+#### 替换服务器 IP 时的检查清单
+
+1. 更新 `deploy/deploy.config.mjs` 的 `ssh.host`
+2. 更新 `src/netunnel-desktop-tauri/.env.production` 的 `VITE_DEFAULT_BRIDGE_ADDR`
+3. 更新服务端生产配置里的 `public_host`
+4. 保持 `VITE_DEFAULT_HOME_URL` 为公网域名
+5. 保持 `public_api_base_url` 为公网域名
+6. 保持 `host_domain_suffix` 为域名后缀，不要改成 IP
+7. 检查线上 `/www/wwwroot/netunnel/shared/config.yaml` 是否与预期一致
+8. 重启后端后验证：
+   - `curl http://127.0.0.1:40061/api/v1/platform/config`
+   - `curl https://nps1.tx07.cn/api/v1/platform/config`
+   - 两者都应返回 `{"host_domain_suffix":"nps1.tx07.cn"}`
 
 ---
 
@@ -236,7 +294,7 @@ go build -o server-run.exe ./cmd/server
 
 ```js
 ssh: {
-  host: '151.245.90.96',
+   host: '101.43.49.100',
   port: 22,
   username: 'root',
   password: '你的服务器密码',
