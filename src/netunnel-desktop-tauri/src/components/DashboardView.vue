@@ -27,15 +27,10 @@ const billingProfile = ref<BillingProfile | null>(null)
 const businessRecords = ref<UserBusinessRecord[]>([])
 const businessRecordsPage = ref(1)
 const businessRecordsPageSize = ref(10)
-const trafficRechargeOptions = [10, 50, 100] as const
-const TRAFFIC_PAYMENT_PRODUCT_IDS: Record<(typeof trafficRechargeOptions)[number], string> = {
-  10: 'cmn1vuv3k008p5cdwku0vbvmc',
-  50: 'cmn1vv5bi008r5cdw7wq2xquv',
-  100: 'cmn1vvk6w008t5cdwewom8m1z',
-}
-const MONTHLY_PAYMENT_PRODUCT_ID = 'cmn1vwkus008v5cdw15hyi1h1'
-const YEARLY_PAYMENT_PRODUCT_ID = 'cmn1vwu70008x5cdwxhf3njnl'
+const trafficRechargeOptions = [2, 10, 20] as const
+const DYNAMIC_PAYMENT_PRODUCT_ID = 'cmn1vuv3k008p5cdwku0vbvmc'
 const PAYMENT_POLL_INTERVAL_MS = 2500
+const TRAFFIC_PRICE_PER_GB_CENTS = 50
 const workspaceStorageKey = 'netunnel-desktop-tauri-workspace'
 const lastLoginStorageKey = 'netunnel-desktop-tauri-last-login-map'
 const localAgentState = ref({
@@ -118,6 +113,12 @@ interface FixedPricingPlan {
   current: boolean
 }
 
+interface TrafficRechargeOption {
+  gb: (typeof trafficRechargeOptions)[number]
+  amountCent: number
+  amountLabel: string
+}
+
 const monthlyPricingRule = computed(() =>
   pricingRules.value.find(
     (rule) => rule.billing_mode === 'subscription' && rule.subscription_period === 'month' && rule.is_unlimited,
@@ -134,6 +135,13 @@ const trafficPricingRule = computed(() =>
   pricingRules.value.find((rule) => rule.billing_mode === 'traffic') ??
   pricingRules.value.find((rule) => rule.name === 'default-traffic'),
 )
+const trafficRechargePlanOptions = computed<TrafficRechargeOption[]>(() =>
+  trafficRechargeOptions.map((gb) => ({
+    gb,
+    amountCent: gb * TRAFFIC_PRICE_PER_GB_CENTS,
+    amountLabel: formatPaymentAmount(gb * TRAFFIC_PRICE_PER_GB_CENTS),
+  })),
+)
 const paymentQRCodeDataUrl = ref('')
 const paymentSnapshot = ref<PaymentOrderSnapshot | null>(null)
 const paymentStatus = ref<'idle' | 'pending' | 'paid' | 'expired' | 'closed' | 'error'>('idle')
@@ -143,8 +151,8 @@ const fixedPricingPlans = computed<FixedPricingPlan[]>(() => [
   {
     key: 'traffic',
     title: '按流量充值',
-    description: trafficPricingRule.value?.description || '无到期时间，优先使用包年包月套餐。',
-    priceLabel: `${formatSingleDecimalAmount(trafficPricingRule.value?.price_per_gb || '1')} 元 / GB`,
+    description: '按 0.5 元 / GB 计费，可直接购买 2GB、10GB、20GB 流量包。',
+    priceLabel: '0.5 元 / GB',
     actionLabel: '快捷充值',
     current: billingProfile.value?.pricing_rule.billing_mode === 'traffic',
   },
@@ -167,6 +175,30 @@ const fixedPricingPlans = computed<FixedPricingPlan[]>(() => [
     current: billingProfile.value?.pricing_rule.id === yearlyPricingRule.value?.id,
   },
 ])
+
+const trafficPlan = computed(() => fixedPricingPlans.value.find((plan) => plan.key === 'traffic'))
+const monthlyPlan = computed(() => fixedPricingPlans.value.find((plan) => plan.key === 'month'))
+const yearlyPlan = computed(() => fixedPricingPlans.value.find((plan) => plan.key === 'year'))
+
+function planFeatureList(planKey: FixedPricingPlan['key']) {
+  switch (planKey) {
+    case 'traffic':
+      return ['灵活充值，按需购买', '已购流量长期有效']
+    case 'month':
+      return ['全球高速节点任意切换', '无限流量使用不限速']
+    case 'year':
+      return ['包含全部包月权益', '365 天稳定可用']
+    default:
+      return []
+  }
+}
+
+function planActionText(plan?: FixedPricingPlan) {
+  if (!plan?.rule) {
+    return '暂不可用'
+  }
+  return plan.current ? '续费购买' : plan.actionLabel
+}
 
 const handleHeaderMouseDown = (event: MouseEvent) => {
   const target = event.target as HTMLElement | null
@@ -579,6 +611,7 @@ async function syncPaymentStatus(bizId: string, options?: { silent?: boolean }) 
 async function startPaymentFlow(payload: {
   order_type: 'traffic_recharge' | 'pricing_rule'
   payment_product_id: string
+  amount: number
   pricing_rule_id?: string
   recharge_gb?: number
 }) {
@@ -627,7 +660,8 @@ async function startPaymentFlow(payload: {
 async function purchaseTrafficPlan(amountGb: (typeof trafficRechargeOptions)[number]) {
   await startPaymentFlow({
     order_type: 'traffic_recharge',
-    payment_product_id: TRAFFIC_PAYMENT_PRODUCT_IDS[amountGb],
+    payment_product_id: DYNAMIC_PAYMENT_PRODUCT_ID,
+    amount: amountGb * TRAFFIC_PRICE_PER_GB_CENTS,
     recharge_gb: amountGb,
   })
 }
@@ -640,7 +674,8 @@ async function purchasePricingRule(rule?: PricingRule) {
 
   await startPaymentFlow({
     order_type: 'pricing_rule',
-    payment_product_id: rule.subscription_period === 'year' ? YEARLY_PAYMENT_PRODUCT_ID : MONTHLY_PAYMENT_PRODUCT_ID,
+    payment_product_id: DYNAMIC_PAYMENT_PRODUCT_ID,
+    amount: Math.round(Number(rule.subscription_price) * 100),
     pricing_rule_id: rule.id,
   })
 }
@@ -662,14 +697,6 @@ function formatIntegerAmount(amount: string | number) {
 
 function formatPricingAmount(amount: string | number) {
   return `${formatIntegerAmount(amount)} 元`
-}
-
-function formatSingleDecimalAmount(amount: string | number) {
-  const numericAmount = typeof amount === 'number' ? amount : Number(amount)
-  if (!Number.isFinite(numericAmount)) {
-    return String(amount)
-  }
-  return numericAmount.toFixed(1)
 }
 
 function formatTrafficAmount(bytes: number) {
@@ -913,73 +940,121 @@ watch(
       <SettingsPanel mode="modal" @close="store.closeSettingsModal()" />
     </div>
 
-    <el-dialog v-model="rechargeDialogVisible" title="充值与套餐购买" width="760">
-      <div class="space-y-5">
-        <section class="grid gap-4 md:grid-cols-2">
-          <div class="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4">
-            <p class="text-xs uppercase tracking-[0.12em] text-[var(--text-muted)]">剩余流量</p>
-            <p class="mt-2 text-2xl font-semibold text-[var(--text-strong)]">
-              {{ remainingTrafficLabel }}
-            </p>
-            <p class="mt-2 text-sm text-[var(--text-soft)]">
-              不限额到期时间：{{ expiryLabel }}
-            </p>
-            <p class="mt-1 text-xs text-[var(--text-soft)]">
-              套餐有效期内优先使用套餐，不扣减剩余流量余额。
-            </p>
+    <el-dialog v-model="rechargeDialogVisible" title="充值与套餐购买" width="880" class="recharge-dialog" modal-class="recharge-dialog-overlay">
+      <div class="recharge-upgrade space-y-4">
+        <section class="recharge-upgrade__hero">
+          <div class="recharge-upgrade__hero-glow"></div>
+          <div class="recharge-upgrade__hero-main">
+            <div class="recharge-upgrade__hero-label">
+              <span class="i-mdi-database-outline text-lg text-[var(--brand)]"></span>
+              <span>当前剩余流量</span>
+            </div>
+            <div class="recharge-upgrade__hero-value">
+              <span class="recharge-upgrade__hero-number">{{ remainingTrafficLabel.replace(/\s*GB$/i, '') }}</span>
+              <span class="recharge-upgrade__hero-unit">GB</span>
+            </div>
+          </div>
+          <div class="recharge-upgrade__hero-side">
+            <div class="recharge-upgrade__status">
+              <span class="recharge-upgrade__status-dot"></span>
+              <span>账户状态：正常运行中</span>
+            </div>
+            <span class="recharge-upgrade__pill recharge-upgrade__pill--side">
+              <span class="i-mdi-calendar-check-outline text-sm"></span>
+              <span>到期时间：{{ expiryLabel }}</span>
+            </span>
           </div>
         </section>
 
-        <section class="space-y-3">
-          <div class="flex items-center justify-between">
-            <p class="text-sm font-semibold text-[var(--text-strong)]">可购买套餐</p>
-            <p class="text-xs text-[var(--text-muted)]">固定展示流量充值、包月、包年三档方案。</p>
+        <section class="space-y-4">
+          <div class="flex items-center gap-3">
+            <h3 class="text-lg font-semibold text-[var(--text-strong)]">可选购套餐</h3>
+            <div class="h-px flex-1 bg-[var(--line)]"></div>
           </div>
 
-          <div class="grid gap-4 md:grid-cols-3">
-            <article
-              v-for="plan in fixedPricingPlans"
-              :key="plan.key"
-              class="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4 transition-colors"
-              :class="{ 'border-[var(--brand)]': plan.current }"
-            >
-              <div class="flex items-start justify-between gap-3">
-                <div>
-                  <p class="text-base font-semibold text-[var(--text-strong)]">{{ plan.title }}</p>
-                  <p class="mt-1 text-sm text-[var(--text-soft)]">{{ plan.description }}</p>
-                </div>
+          <div class="grid gap-3 md:grid-cols-3">
+            <article class="recharge-card recharge-card--traffic">
+              <div class="recharge-card__badge recharge-card__badge--traffic">按量付费</div>
+              <div class="recharge-card__price-row">
+                <span class="recharge-card__price">0.5</span>
+                <span class="recharge-card__price-suffix">元 / GB</span>
               </div>
-
-              <div v-if="plan.key === 'traffic'" class="mt-4 space-y-3">
-                <div class="text-lg font-semibold text-[var(--brand)]">{{ plan.priceLabel }}</div>
-                <div class="grid grid-cols-3 gap-2">
-                  <el-button
-                    v-for="amount in trafficRechargeOptions"
-                    :key="amount"
-                    type="primary"
-                    plain
-                    :loading="billingLoading"
-                    @click="purchaseTrafficPlan(amount)"
-                  >
-                    {{ amount }}G
-                  </el-button>
-                </div>
-              </div>
-
-              <div v-else class="mt-4 flex items-center justify-between">
-                <div class="text-lg font-semibold text-[var(--brand)]">{{ plan.priceLabel }}</div>
-                <el-button
-                  :type="plan.rule ? 'primary' : 'default'"
-                  :disabled="!plan.rule"
-                  :loading="billingLoading"
-                  @click="purchasePricingRule(plan.rule)"
+              <p class="recharge-card__description">{{ trafficPlan?.description }}</p>
+              <ul class="recharge-card__feature-list">
+                <li v-for="feature in planFeatureList('traffic')" :key="feature">{{ feature }}</li>
+              </ul>
+              <div class="recharge-card__traffic-options">
+                <button
+                  v-for="option in trafficRechargePlanOptions"
+                  :key="option.gb"
+                  class="recharge-card__traffic-chip"
+                  type="button"
+                  :disabled="billingLoading"
+                  @click="purchaseTrafficPlan(option.gb)"
                 >
-                  {{ plan.current ? '续费购买' : plan.actionLabel }}
-                </el-button>
+                  <span class="recharge-card__traffic-chip-size">{{ option.gb }}GB</span>
+                  <span class="recharge-card__traffic-chip-price">{{ option.amountLabel }}</span>
+                </button>
               </div>
+              <button
+                class="recharge-card__action recharge-card__action--ghost"
+                type="button"
+                :disabled="billingLoading"
+                @click="purchaseTrafficPlan(trafficRechargePlanOptions[1]?.gb ?? trafficRechargeOptions[0])"
+              >
+                选择并支付
+                <span class="i-mdi-chevron-right text-lg"></span>
+              </button>
+            </article>
+
+            <article class="recharge-card recharge-card--featured">
+              <div class="recharge-card__corner">HOT</div>
+              <div class="recharge-card__badge recharge-card__badge--featured">不限量包月</div>
+              <div class="recharge-card__price-row recharge-card__price-row--featured">
+                <span class="recharge-card__price recharge-card__price--featured">{{ monthlyPlan?.rule ? formatIntegerAmount(monthlyPlan.rule.subscription_price) : '--' }}</span>
+                <span class="recharge-card__price-suffix recharge-card__price-suffix--featured">元 / 月</span>
+              </div>
+              <p class="recharge-card__description recharge-card__description--strong">{{ monthlyPlan?.description }}</p>
+              <ul class="recharge-card__feature-list recharge-card__feature-list--featured">
+                <li v-for="feature in planFeatureList('month')" :key="feature">{{ feature }}</li>
+              </ul>
+              <button
+                class="recharge-card__action recharge-card__action--primary"
+                type="button"
+                :disabled="!monthlyPlan?.rule || billingLoading"
+                @click="purchasePricingRule(monthlyPlan?.rule)"
+              >
+                <span class="i-mdi-flash text-base"></span>
+                {{ planActionText(monthlyPlan) }}
+              </button>
+            </article>
+
+            <article class="recharge-card recharge-card--yearly">
+              <div class="flex items-center justify-between gap-3">
+                <div class="recharge-card__badge recharge-card__badge--yearly">不限量包年</div>
+                <span class="recharge-card__saving">立省 20 元</span>
+              </div>
+              <div class="recharge-card__price-row">
+                <span class="recharge-card__price">{{ yearlyPlan?.rule ? formatIntegerAmount(yearlyPlan.rule.subscription_price) : '--' }}</span>
+                <span class="recharge-card__price-suffix">元 / 年</span>
+              </div>
+              <p class="recharge-card__description">{{ yearlyPlan?.description }}</p>
+              <ul class="recharge-card__feature-list">
+                <li v-for="feature in planFeatureList('year')" :key="feature">{{ feature }}</li>
+              </ul>
+              <button
+                class="recharge-card__action recharge-card__action--dark"
+                type="button"
+                :disabled="!yearlyPlan?.rule || billingLoading"
+                @click="purchasePricingRule(yearlyPlan?.rule)"
+              >
+                {{ planActionText(yearlyPlan) }}
+                <span class="i-mdi-cart-outline text-base"></span>
+              </button>
             </article>
           </div>
         </section>
+
       </div>
     </el-dialog>
 
@@ -1058,3 +1133,403 @@ watch(
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+:deep(.recharge-dialog-overlay) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 20px;
+}
+
+:deep(.recharge-dialog-overlay .el-overlay-dialog) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+:deep(.recharge-dialog) {
+  margin: 0 !important;
+  max-height: calc(100vh - 40px);
+  overflow: hidden;
+}
+
+:deep(.recharge-dialog .el-dialog__body) {
+  max-height: calc(100vh - 140px);
+  overflow: hidden;
+}
+
+.recharge-upgrade {
+  padding: 2px;
+}
+
+.recharge-upgrade__hero {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--brand) 10%, transparent);
+  border-radius: 28px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(244, 248, 255, 0.96) 100%);
+  box-shadow: 0 20px 40px rgba(12, 36, 64, 0.06), 0 8px 18px rgba(12, 36, 64, 0.04);
+  padding: 18px 20px;
+}
+
+.recharge-upgrade__hero-glow {
+  position: absolute;
+  top: -60px;
+  right: -40px;
+  width: 180px;
+  height: 180px;
+  border-radius: 999px;
+  background: rgba(64, 139, 255, 0.12);
+  filter: blur(18px);
+}
+
+.recharge-upgrade__hero-main,
+.recharge-upgrade__hero-side {
+  position: relative;
+  z-index: 1;
+}
+
+.recharge-upgrade__hero-main {
+  min-width: 0;
+}
+
+.recharge-upgrade__hero-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.recharge-upgrade__hero-value {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.recharge-upgrade__hero-number {
+  font-size: clamp(30px, 5vw, 44px);
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: var(--text-strong);
+}
+
+.recharge-upgrade__hero-unit {
+  color: var(--brand);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.recharge-upgrade__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.04);
+  padding: 7px 10px;
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.recharge-upgrade__pill--side {
+  align-self: flex-end;
+}
+
+.recharge-upgrade__hero-side {
+  display: flex;
+  min-width: 210px;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 8px;
+}
+
+.recharge-upgrade__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(34, 197, 94, 0.16);
+  border-radius: 18px;
+  background: rgba(34, 197, 94, 0.08);
+  padding: 8px 12px;
+  color: #15803d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.recharge-upgrade__status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.14);
+}
+
+.recharge-card {
+  position: relative;
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 249, 252, 0.98) 100%);
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.05);
+  padding: 16px;
+}
+
+.recharge-card--featured {
+  transform: scale(1.02);
+  border-color: rgba(37, 99, 235, 0.18);
+  background: linear-gradient(180deg, rgba(234, 244, 255, 0.92) 0%, rgba(247, 250, 255, 0.98) 100%);
+  box-shadow: 0 24px 48px rgba(37, 99, 235, 0.12);
+}
+
+.recharge-card__corner {
+  position: absolute;
+  top: 10px;
+  right: -32px;
+  transform: rotate(18deg);
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ea580c 0%, #f97316 100%);
+  padding: 5px 30px;
+  color: white;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.recharge-card__badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 10px;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.recharge-card__badge--traffic {
+  background: rgba(56, 189, 248, 0.14);
+  color: #0369a1;
+}
+
+.recharge-card__badge--featured {
+  background: rgba(37, 99, 235, 0.14);
+  color: var(--brand);
+}
+
+.recharge-card__badge--yearly {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+}
+
+.recharge-card__price-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.recharge-card__price-row--featured {
+  margin-top: 18px;
+}
+
+.recharge-card__price {
+  font-size: 32px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.05em;
+  color: var(--text-strong);
+}
+
+.recharge-card__price--featured {
+  font-size: 36px;
+  color: var(--brand);
+}
+
+.recharge-card__price-suffix {
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.recharge-card__price-suffix--featured {
+  color: color-mix(in srgb, var(--brand) 72%, white);
+}
+
+.recharge-card__description {
+  margin-top: 10px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.recharge-card__description--strong {
+  color: var(--text-strong);
+}
+
+.recharge-card__feature-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  margin: 14px 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.recharge-card__feature-list li {
+  position: relative;
+  padding-left: 18px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.recharge-card__feature-list li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand) 82%, white);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 12%, transparent);
+}
+
+.recharge-card__feature-list--featured li {
+  color: var(--text-strong);
+  font-weight: 500;
+}
+
+.recharge-card__traffic-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 2px 0 14px;
+}
+
+.recharge-card__traffic-chip {
+  display: flex;
+  min-height: 56px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.04);
+  color: var(--text-strong);
+  transition: all 0.2s ease;
+}
+
+.recharge-card__traffic-chip:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(37, 99, 235, 0.18);
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.recharge-card__traffic-chip:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.recharge-card__traffic-chip-size {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.recharge-card__traffic-chip-price {
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.recharge-card__saving {
+  color: #c2410c;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.recharge-card__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 42px;
+  border: none;
+  border-radius: 15px;
+  font-size: 13px;
+  font-weight: 700;
+  transition: all 0.2s ease;
+}
+
+.recharge-card__action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.recharge-card__action--ghost {
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--brand);
+}
+
+.recharge-card__action--ghost:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.14);
+}
+
+.recharge-card__action--primary {
+  background: linear-gradient(135deg, #0b63ce 0%, #1d7df2 100%);
+  color: white;
+  box-shadow: 0 14px 26px rgba(37, 99, 235, 0.24);
+}
+
+.recharge-card__action--primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.recharge-card__action--dark {
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--text-strong);
+}
+
+.recharge-card__action--dark:hover:not(:disabled) {
+  background: rgba(15, 23, 42, 0.12);
+}
+
+@media (max-width: 960px) {
+  .recharge-upgrade__hero {
+    flex-direction: column;
+  }
+
+  .recharge-upgrade__hero-side {
+    min-width: 0;
+    align-items: flex-start;
+  }
+
+  .recharge-upgrade__pill--side {
+    align-self: flex-start;
+  }
+
+  .recharge-card--featured {
+    transform: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .recharge-card__traffic-options {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

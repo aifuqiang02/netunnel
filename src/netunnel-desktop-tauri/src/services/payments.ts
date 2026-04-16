@@ -24,7 +24,8 @@ export interface PaymentSession {
     id: string
     name: string
     description: string
-    price: number
+    amountMode?: 'fixed' | 'dynamic' | string
+    price?: number | null
   }
   businessNotify?: PaymentBusinessNotify
 }
@@ -66,6 +67,7 @@ export async function createPaymentOrder(client: ReturnTypeCreateApiClient, payl
   user_id: string
   order_type: 'traffic_recharge' | 'pricing_rule'
   payment_product_id: string
+  amount?: number
   pricing_rule_id?: string
   recharge_gb?: number
 }) {

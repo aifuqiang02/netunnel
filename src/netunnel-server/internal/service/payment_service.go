@@ -30,6 +30,7 @@ type CreatePaymentOrderInput struct {
 	UserID           string `json:"user_id"`
 	OrderType        string `json:"order_type"`
 	PaymentProductID string `json:"payment_product_id"`
+	Amount           int    `json:"amount"`
 	PricingRuleID    string `json:"pricing_rule_id"`
 	RechargeGB       int    `json:"recharge_gb"`
 }
@@ -62,13 +63,15 @@ type paymentCreateSessionRequest struct {
 	PaymentProductID string `json:"paymentProductId"`
 	BizID            string `json:"bizId"`
 	NotifyURL        string `json:"notifyUrl"`
+	Amount           int    `json:"amount,omitempty"`
 }
 
 type paymentProductInfo struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Price       int    `json:"price"`
+	AmountMode  string `json:"amountMode,omitempty"`
+	Price       *int   `json:"price"`
 }
 
 type paymentBusinessNotifyStatus struct {
@@ -130,9 +133,22 @@ func (s *PaymentService) CreatePaymentOrder(ctx context.Context, input CreatePay
 		if input.RechargeGB <= 0 {
 			return nil, fmt.Errorf("%w: recharge_gb is required", ErrInvalidArgument)
 		}
+		if input.Amount <= 0 {
+			return nil, fmt.Errorf("%w: amount is required", ErrInvalidArgument)
+		}
+		if input.Amount != input.RechargeGB*50 {
+			return nil, fmt.Errorf("%w: traffic recharge amount mismatch", ErrInvalidArgument)
+		}
 	case "pricing_rule":
 		if input.PricingRuleID == "" {
 			return nil, fmt.Errorf("%w: pricing_rule_id is required", ErrInvalidArgument)
+		}
+		expectedAmount, err := s.billing.PricingRuleAmountCents(ctx, input.PricingRuleID)
+		if err != nil {
+			return nil, err
+		}
+		if input.Amount != expectedAmount {
+			return nil, fmt.Errorf("%w: pricing rule amount mismatch", ErrInvalidArgument)
 		}
 	default:
 		return nil, fmt.Errorf("%w: unsupported order_type", ErrInvalidArgument)
@@ -161,6 +177,7 @@ func (s *PaymentService) CreatePaymentOrder(ctx context.Context, input CreatePay
 		PaymentProductID: input.PaymentProductID,
 		BizID:            bizID,
 		NotifyURL:        notifyURL,
+		Amount:           input.Amount,
 	})
 	if err != nil {
 		return nil, err

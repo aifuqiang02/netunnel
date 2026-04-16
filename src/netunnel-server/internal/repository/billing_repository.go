@@ -687,6 +687,14 @@ func (r *BillingRepository) resolveActiveBillingTx(ctx context.Context, tx *sql.
 	return &activeBillingContext{rule: rule}, nil
 }
 
+func (r *BillingRepository) GetPricingRuleByID(ctx context.Context, pricingRuleID string) (*domain.PricingRule, error) {
+	pricingRuleID = strings.TrimSpace(pricingRuleID)
+	if pricingRuleID == "" {
+		return nil, fmt.Errorf("pricing rule id is required")
+	}
+	return r.getPricingRuleByID(ctx, r.db, pricingRuleID)
+}
+
 func (r *BillingRepository) getActiveSubscription(ctx context.Context, querier queryRower, userID string) (*domain.UserSubscription, *domain.PricingRule, error) {
 	const query = `
 select us.id, us.user_id, us.pricing_rule_id, us.status, us.started_at, us.current_period_start, us.current_period_end,

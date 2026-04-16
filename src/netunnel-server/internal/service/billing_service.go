@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,6 +60,30 @@ func (s *BillingService) GetBillingProfile(ctx context.Context, userID string) (
 
 func (s *BillingService) ListPricingRules(ctx context.Context) ([]domain.PricingRule, error) {
 	return s.billing.ListPricingRules(ctx, "active")
+}
+
+func (s *BillingService) GetPricingRule(ctx context.Context, pricingRuleID string) (*domain.PricingRule, error) {
+	pricingRuleID = strings.TrimSpace(pricingRuleID)
+	if pricingRuleID == "" {
+		return nil, fmt.Errorf("%w: pricing_rule_id is required", ErrInvalidArgument)
+	}
+	return s.billing.GetPricingRuleByID(ctx, pricingRuleID)
+}
+
+func (s *BillingService) PricingRuleAmountCents(ctx context.Context, pricingRuleID string) (int, error) {
+	rule, err := s.GetPricingRule(ctx, pricingRuleID)
+	if err != nil {
+		return 0, err
+	}
+
+	price, err := strconv.ParseFloat(strings.TrimSpace(rule.SubscriptionPrice), 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse pricing rule subscription price: %w", err)
+	}
+	if price <= 0 {
+		return 0, fmt.Errorf("%w: pricing rule amount is invalid", ErrInvalidArgument)
+	}
+	return int(math.Round(price * 100)), nil
 }
 
 func (s *BillingService) ActivatePricingRule(ctx context.Context, input ActivatePricingRuleInput) (*repository.ActivatePricingRuleResult, error) {
