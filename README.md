@@ -1,84 +1,62 @@
+<div align="center">
+
 # Netunnel
 
-内网穿透项目，包含桌面端、服务端和 agent。当前数据面已经从“每 tunnel 一个待命 bridge”迁移到“agent 级 data session + substream”模式。
+内网穿透，0.5 元/GB，1 元起用。
 
-## 项目结构
+每次用内网穿透软件，总会遇到各种限制，而且还贵，于是决定自己做一个。
 
-```text
-netunnel/
-├── package.json
-├── pnpm-workspace.yaml
-├── src/
-│   ├── netunnel-desktop-tauri/    # Tauri 桌面端（Vue 3 + TypeScript）
-│   ├── netunnel-server/           # Go 服务端
-│   └── netunnel-agent/            # Go Agent
-├── docs/
-└── designs/
-```
+<img src="./docs/images/home.png" alt="Netunnel 首页截图" width="900" />
 
-## 常用命令
+</div>
 
-### 根目录
+## 适合谁
 
-- `pnpm install`
-- `pnpm --filter netunnel-desktop-tauri dev`
-- `pnpm --filter netunnel-desktop-tauri build`
+- 需要从外网访问本地开发环境的开发者
+- 需要把本地 Web 服务临时暴露给同事或客户的团队
+- 需要远程访问家里电脑、NAS、Windows 远程桌面的个人用户
+- 需要稳定公网访问入口的轻量使用场景
 
-### 服务端
+## 可以做什么
 
-- `cd src/netunnel-server && go build ./...`
-- `cd src/netunnel-server && go test ./...`
+- 发布本地网站或本地 API 到公网
+- 把本地 TCP 服务映射到公网端口
+- 为本地服务生成可直接访问的域名入口
+- 在桌面客户端里统一管理设备、隧道和访问地址
 
-### Agent
+## 使用方式
 
-- `cd src/netunnel-agent && go build ./...`
-- `cd src/netunnel-agent && go test ./...`
+1. 登录桌面客户端
+2. 添加或选择一台在线设备
+3. 创建 TCP、HTTP 或域名隧道
+4. 获取访问地址并直接使用
 
-## 服务端配置
+如果你只是想使用 Netunnel，不需要先阅读服务端部署、环境搭建或本地开发说明。
 
-服务端配置文件位于：
+## 说明
 
-- `src/netunnel-server/config.yaml`
-- `src/netunnel-server/config.production.yaml`
+- 本仓库首页文档默认面向产品使用者，而不是面向自部署用户
+- 安装部署、开发环境、服务端运维等内容不在这里展开
+- 如果你是在参与项目开发或维护，请优先查看仓库内对应子项目文档与内部说明
 
-当前常用配置项：
+## 免责声明
 
-- `listen_addr`: HTTP API 监听地址，默认 `:40061`
-- `bridge_listen_addr`: agent 连接入口，默认 `:40062`
-- `tcp_port_ranges`: TCP tunnel 可分配端口范围
-- `public_host`: TCP 对外地址
-- `public_api_base_url`: HTTP API 对外地址
-- `host_domain_suffix`: 域名隧道后缀
+- 本软件仅限用于合法、合规、正当的网络访问与远程连接场景
+- 禁止将本软件用于任何违法违规、攻击入侵、绕过监管或侵犯他人权益的用途
+- 使用者应自行确保其访问、映射和传输的资源拥有合法授权，并自行承担相应责任
 
-## 数据面迁移状态
+## 联系交流
 
-当前数据面状态：
+如果你想反馈问题、交流使用体验或加入沟通群，可以扫码加入 QQ 群。
 
-- TCP：走 `data session + substream`
-- `http_host`：走 `data session + substream`
-
-## 运行观察
-
-重点日志：
-
-- 服务端 TCP：`tcp runtime summary`
-- 服务端 data session：
-  - `data session summary`
-  - `data session counters`
-  - `data session per-agent streams`
-  - `data session per-tunnel streams`
-- 服务端 HTTP：`public http summary`
-- Agent：`agent data session summary`
-
-建议重点看这些字段：
-
-- TCP：`data_session_successes`、`data_session_failures`、`data_session_acquire_failures`
-- HTTP：`data_session_successes`、`data_session_failures`、`data_stream_failures`
-- Agent：`retries`、`active_streams`、`open_failures`、`write_fail_closes`
+<div align="center">
+  <img src="./docs/images/qq.jpg" alt="Netunnel QQ 联系群" width="320" />
+</div>
 
 ## 相关文档
 
+- `docs/README.md`
 - `AGENTS.md`
+- `src/netunnel-desktop-tauri/README.md`
 - `src/netunnel-server/README.md`
 - `src/netunnel-agent/README.md`
-- `src/netunnel-desktop-tauri/README.md`
