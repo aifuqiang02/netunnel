@@ -170,6 +170,12 @@ struct AgentLaunchInput {
     arguments: Option<Vec<String>>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchRdpInput {
+    target: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProbeResult {
@@ -210,6 +216,25 @@ fn open_in_file_manager(path: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn launch_windows_remote_desktop(target: &str) -> Result<(), String> {
+    let target = target.trim();
+    if target.is_empty() {
+        return Err("远程桌面目标地址不能为空。".to_string());
+    }
+
+    let mut command = Command::new("mstsc");
+    command.arg(format!("/v:{target}"));
+    configure_background_command(&mut command);
+    command.spawn().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn launch_windows_remote_desktop(_target: &str) -> Result<(), String> {
+    Err("当前系统不支持启动 Windows 远程桌面。".to_string())
 }
 
 fn updater_config() -> Result<serde_json::Value, String> {
@@ -1022,6 +1047,11 @@ fn open_agent_directory(
     open_in_file_manager(directory)
 }
 
+#[tauri::command]
+fn launch_remote_desktop(input: LaunchRdpInput) -> Result<(), String> {
+    launch_windows_remote_desktop(&input.target)
+}
+
 #[derive(Deserialize)]
 struct LogInput {
     level: String,
@@ -1361,6 +1391,7 @@ pub fn run() {
             probe_tcp_endpoint,
             probe_http_endpoint,
             open_agent_directory,
+            launch_remote_desktop,
             get_or_create_agent_id,
             reset_agent_id,
             log_message

@@ -805,6 +805,27 @@ async function openAccessTarget(target: string) {
   }
 }
 
+function canLaunchRemoteDesktop(tunnel: Tunnel) {
+  if (!isTauri()) {
+    return false
+  }
+  return tunnel.type === 'tcp' && tunnel.local_port === 3389 && Boolean(tunnel.access_target?.trim())
+}
+
+async function launchRemoteDesktop(tunnel: Tunnel) {
+  const target = tunnel.access_target?.trim()
+  if (!target) {
+    actionError.value = '当前隧道还没有可用的访问地址。'
+    return
+  }
+
+  try {
+    await invoke('launch_remote_desktop', { input: { target } })
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
 async function simpleAction(requestFn: () => Promise<unknown>, successMessage: string) {
   loading.value = true
   resetStatus()
@@ -1100,6 +1121,9 @@ defineExpose({
                   >
                     {{ target }}
                   </el-tag>
+                  <el-button v-if="canLaunchRemoteDesktop(row)" text type="primary" @click="launchRemoteDesktop(row)">
+                    远程桌面
+                  </el-button>
                   <el-button text type="primary" @click="copyText(target)">
                     <span class="i-mdi-content-copy text-sm"></span>
                   </el-button>
