@@ -11,6 +11,7 @@ netunnel/                          # pnpm workspace 根目录
 │       └── release.yml            # GitHub 自动发布 workflow
 ├── src/
 │   ├── netunnel-desktop-tauri/    # Tauri 桌面端 (Vue 3 + Tailwind + Pinia + TypeScript)
+│   ├── netunnel-docs-site/        # 官网与文档站 (VuePress + Plume)
 │   ├── netunnel-server/          # Go 后端服务 (pgx/v5 + 标准库)
 │   └── netunnel-agent/           # Go Agent 客户端
 └── designs/                      # 设计资源
@@ -30,6 +31,23 @@ netunnel/                          # pnpm workspace 根目录
 | `pnpm --filter netunnel-desktop-tauri type-check` | TypeScript 类型检查 |
 | `pnpm --filter netunnel-desktop-tauri tauri dev` | 启动 Tauri 开发模式 |
 | `pnpm --filter netunnel-desktop-tauri tauri build` | 构建 Tauri 安装包 |
+| `pnpm --filter netunnel-docs-site docs:dev` | 启动官网文档站开发服务器 |
+| `pnpm --filter netunnel-docs-site docs:build` | 构建官网文档站生产版本 |
+
+### 官网文档站 (`src/netunnel-docs-site/`)
+
+| 命令 | 说明 |
+|------|------|
+| `pnpm --filter netunnel-docs-site docs:dev` | 启动官网文档站开发服务器 |
+| `pnpm --filter netunnel-docs-site docs:build` | 构建官网文档站生产版本 |
+| `pnpm --filter netunnel-docs-site docs:preview` | 预览官网文档站构建产物 |
+
+当前站点角色：
+
+- 对外官网入口
+- 下载页与快速开始入口
+- 使用文档与 FAQ 入口
+- 推广场景教程承接页
 
 ### 版本号更新
 
@@ -356,6 +374,37 @@ node ./deploy/deploy.mjs --target backend
 
 ```bash
 pnpm run deploy:server -- --target backend
+```
+
+### 发布官网文档站到服务器
+
+文档站部署目标为 `docs-site`，当前发布目录：`/www/wwwroot/netunnel/docs`
+
+```bash
+node ./deploy/deploy.mjs --target docs-site
+```
+
+或：
+
+```bash
+pnpm run deploy:server -- --target docs-site
+```
+
+当前域名约定：
+
+- `netunnel.tx07.cn` -> `/www/wwwroot/netunnel/docs`
+- 对应 Nginx 模板：`deploy/nginx/netunnel.tx07.cn.conf`
+
+如更新了文档站 Nginx 模板，可执行：
+
+```bash
+pnpm run sync:nginx:netunnel
+```
+
+发布完成后可检查：
+
+```bash
+curl -k -H 'Host: netunnel.tx07.cn' https://127.0.0.1/
 ```
 
 ### 发布完成后检查

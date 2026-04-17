@@ -11,7 +11,7 @@ import (
 )
 
 const defaultPricingRuleName = "default-traffic"
-const defaultPricingRulePricePerGB = "1.0000"
+const defaultPricingRulePricePerGB = "0.5000"
 
 type BillingRepository struct {
 	db *sql.DB

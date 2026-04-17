@@ -4,9 +4,17 @@
 
 ## 推荐阅读
 
+- [产品推广执行方案](./产品推广执行方案.md)
 - [新内网穿透系统技术方案](./新内网穿透系统技术方案.md)
 - [netunnel-桌面端接口集成文档](./netunnel-桌面端接口集成文档.md)
 - [netunnel-桌面端原型说明](./netunnel-桌面端原型说明.md)
+
+## 站点与入口
+
+- `src/netunnel-docs-site/` - `Netunnel` 官网与文档站子项目（VuePress + Plume）
+- 官网首页：`src/netunnel-docs-site/docs/README.md`
+- 下载页：`src/netunnel-docs-site/docs/download/README.md`
+- 快速开始：`src/netunnel-docs-site/docs/quickstart/README.md`
 
 ## 其他文档
 

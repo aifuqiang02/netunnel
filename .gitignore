@@ -40,6 +40,12 @@ Thumbs.db
 src/netunnel-desktop-tauri/src-tauri/target/
 src/netunnel-desktop-tauri/node_modules/
 
+# Docs site
+src/netunnel-docs-site/node_modules/
+src/netunnel-docs-site/docs/.vuepress/.cache/
+src/netunnel-docs-site/docs/.vuepress/.temp/
+src/netunnel-docs-site/docs/.vuepress/dist/
+
 # Env files with secrets
 .env
 .env.*

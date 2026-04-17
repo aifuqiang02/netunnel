@@ -139,7 +139,7 @@ Request body:
 ```json
 {
   "user_id": "79fe6216-98d3-41d3-b655-37591cbdb5f1",
-  "amount": "1.0000",
+  "amount": "0.5000",
   "remark": "desktop manual recharge"
 }
 ```

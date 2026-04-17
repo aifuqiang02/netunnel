@@ -8,9 +8,13 @@
     "build": "pnpm --filter netunnel-desktop-tauri build",
     "type-check": "pnpm --filter netunnel-desktop-tauri type-check",
     "tauri": "pnpm --filter netunnel-desktop-tauri tauri",
+    "docs:dev": "pnpm --filter netunnel-docs-site docs:dev",
+    "docs:build": "pnpm --filter netunnel-docs-site docs:build",
+    "docs:preview": "pnpm --filter netunnel-docs-site docs:preview",
     "deploy:server": "node ./deploy/deploy.mjs",
     "remote:exec": "node ./deploy/remote-exec.mjs",
-    "sync:nginx:nps1": "node ./deploy/sync-nginx-nps1.mjs"
+    "sync:nginx:nps1": "node ./deploy/sync-nginx-nps1.mjs",
+    "sync:nginx:netunnel": "node ./deploy/sync-nginx-netunnel.mjs"
   },
   "devDependencies": {
     "node-ssh": "^13.1.0",
@@ -19,6 +23,7 @@
   "packageManager": "pnpm@10.0.0",
   "pnpm": {
     "onlyBuiltDependencies": [
+      "@parcel/watcher",
       "@swc/core",
       "@tailwindcss/oxide",
       "electron",
