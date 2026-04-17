@@ -19,7 +19,7 @@ import { zhNavbar } from './navbar'
  */
 export default defineThemeConfig({
   logo: '/logo.png',
-  appearance: true,  // 配置 深色模式
+  appearance: 'dark',
 
   social: [
     { icon: 'github', link: 'https://github.com/aifuqiang02/netunnel' },

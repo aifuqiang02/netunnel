@@ -1,8 +1,12 @@
 # 下载
 
-这是 `Netunnel` 官网文档站的下载入口页。
+## 立即下载
 
-当前先提供第一版下载页骨架，后续你只需要把正式下载地址、版本号和更新说明替换进去，就可以直接对外使用。
+- [Windows 安装版（推荐） - Netunnel.Desktop_2.12.11_x64-setup.exe](https://github.com/aifuqiang02/netunnel/releases/download/v2.12.11/Netunnel.Desktop_2.12.11_x64-setup.exe)
+- [Windows MSI 安装包 - Netunnel.Desktop_2.12.11_x64_en-US.msi](https://github.com/aifuqiang02/netunnel/releases/download/v2.12.11/Netunnel.Desktop_2.12.11_x64_en-US.msi)
+- [查看全部 Release 资源](https://github.com/aifuqiang02/netunnel/releases/tag/v2.12.11)
+
+普通 Windows 用户优先下载 `x64-setup.exe`。
 
 ## 当前版本
 
@@ -11,13 +15,7 @@
 - 支持系统：`Windows`
 - 更新方式：客户端内检查更新 / 下载新安装包覆盖安装
 
-## 立即下载
-
-- 推荐下载：[`Netunnel.Desktop_2.12.11_x64-setup.exe`](https://github.com/aifuqiang02/netunnel/releases/download/v2.12.11/Netunnel.Desktop_2.12.11_x64-setup.exe)
-- 备用安装包：[`Netunnel.Desktop_2.12.11_x64_en-US.msi`](https://github.com/aifuqiang02/netunnel/releases/download/v2.12.11/Netunnel.Desktop_2.12.11_x64_en-US.msi)
-- Release 页面总入口：[GitHub Release v2.12.11](https://github.com/aifuqiang02/netunnel/releases/tag/v2.12.11)
-
-推荐说明：
+## 下载说明
 
 - 普通 Windows 用户优先下载 `x64-setup.exe`
 - 如果你的环境更偏企业部署或需要 MSI 安装方式，可以使用 `x64_en-US.msi`
