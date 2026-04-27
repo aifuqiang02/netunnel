@@ -112,6 +112,9 @@ func (s *dataSessionStream) Close() error {
 		close(s.closed)
 		_ = s.session.sendFrame(dataSessionFrame{Type: dataSessionFrameClose, StreamID: s.id})
 		s.session.removeStream(s.id)
+		if s.session.manager != nil {
+			s.session.manager.trackTunnelClose(s.tunnelID)
+		}
 	})
 	return nil
 }
@@ -237,8 +240,6 @@ func (m *DataSessionManager) logSummary() {
 
 func (m *DataSessionManager) Snapshot() DataSessionSnapshot {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	snapshot := DataSessionSnapshot{
 		Sessions:             len(m.sessions),
 		ConnectedSessions:    m.connectedSessions,
@@ -252,15 +253,21 @@ func (m *DataSessionManager) Snapshot() DataSessionSnapshot {
 		PerAgentStreams:      make(map[string]int, len(m.sessions)),
 		PerTunnelActive:      make(map[string]int, len(m.perTunnelActive)),
 	}
+	sessions := make(map[string]*DataSession, len(m.sessions))
 	for agentID, session := range m.sessions {
+		sessions[agentID] = session
+	}
+	for tunnelID, active := range m.perTunnelActive {
+		snapshot.PerTunnelActive[tunnelID] = active
+	}
+	m.mu.Unlock()
+
+	for agentID, session := range sessions {
 		session.mu.Lock()
 		streamCount := len(session.streams)
 		session.mu.Unlock()
 		snapshot.ActiveStreams += streamCount
 		snapshot.PerAgentStreams[agentID] = streamCount
-	}
-	for tunnelID, active := range m.perTunnelActive {
-		snapshot.PerTunnelActive[tunnelID] = active
 	}
 	return snapshot
 }
@@ -284,12 +291,14 @@ func (m *DataSessionManager) HandleConn(ctx context.Context, conn net.Conn, hell
 	session.lastPong.Store(time.Now().UnixNano())
 
 	m.mu.Lock()
-	if old := m.sessions[hello.AgentID]; old != nil {
-		_ = old.Close()
-	}
+	var old *DataSession
+	old = m.sessions[hello.AgentID]
 	m.sessions[hello.AgentID] = session
 	m.connectedSessions++
 	m.mu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
 
 	log.Printf("data session connected: agent=%s", hello.AgentID)
 	go session.runHeartbeat()
