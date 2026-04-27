@@ -32,17 +32,19 @@ type tunnelUsageRecorder interface {
 }
 
 type Server struct {
-	httpServer       *http.Server
-	agentSvc         *service.AgentService
-	userSvc          *service.UserService
-	billingSvc       *service.BillingService
-	paymentSvc       *service.PaymentService
-	tunnelSvc        *service.TunnelService
-	usageSvc         *service.UsageService
-	dashboardSvc     *service.DashboardService
-	bridge           bridgeAcquirer
-	recorder         tunnelUsageRecorder
-	hostDomainSuffix string
+	httpServer         *http.Server
+	agentSvc           *service.AgentService
+	userSvc            *service.UserService
+	billingSvc         *service.BillingService
+	paymentSvc         *service.PaymentService
+	tunnelSvc          *service.TunnelService
+	usageSvc           *service.UsageService
+	dashboardSvc       *service.DashboardService
+	bridge             bridgeAcquirer
+	recorder           tunnelUsageRecorder
+	getBridgeSnapshot  func() any
+	getRuntimeSnapshot func() any
+	hostDomainSuffix   string
 
 	mu                             sync.Mutex
 	httpTunnelActive               map[string]int
@@ -61,19 +63,21 @@ const publicHTTPBodyIdleTimeout = 60 * time.Second
 const maxPublicHTTPPerTunnel = 32
 const publicHTTPSummaryInterval = 1 * time.Minute
 
-func NewServer(listenAddr string, hostDomainSuffix string, agentSvc *service.AgentService, userSvc *service.UserService, billingSvc *service.BillingService, paymentSvc *service.PaymentService, tunnelSvc *service.TunnelService, usageSvc *service.UsageService, dashboardSvc *service.DashboardService, bridge bridgeAcquirer, recorder tunnelUsageRecorder) *Server {
+func NewServer(listenAddr string, hostDomainSuffix string, agentSvc *service.AgentService, userSvc *service.UserService, billingSvc *service.BillingService, paymentSvc *service.PaymentService, tunnelSvc *service.TunnelService, usageSvc *service.UsageService, dashboardSvc *service.DashboardService, bridge bridgeAcquirer, recorder tunnelUsageRecorder, runtimeSnapshot func() any, bridgeSnapshot func() any) *Server {
 	server := &Server{
-		agentSvc:         agentSvc,
-		userSvc:          userSvc,
-		billingSvc:       billingSvc,
-		paymentSvc:       paymentSvc,
-		tunnelSvc:        tunnelSvc,
-		usageSvc:         usageSvc,
-		dashboardSvc:     dashboardSvc,
-		bridge:           bridge,
-		recorder:         recorder,
-		hostDomainSuffix: strings.TrimSpace(hostDomainSuffix),
-		httpTunnelActive: make(map[string]int),
+		agentSvc:           agentSvc,
+		userSvc:            userSvc,
+		billingSvc:         billingSvc,
+		paymentSvc:         paymentSvc,
+		tunnelSvc:          tunnelSvc,
+		usageSvc:           usageSvc,
+		dashboardSvc:       dashboardSvc,
+		bridge:             bridge,
+		recorder:           recorder,
+		getRuntimeSnapshot: runtimeSnapshot,
+		getBridgeSnapshot:  bridgeSnapshot,
+		hostDomainSuffix:   strings.TrimSpace(hostDomainSuffix),
+		httpTunnelActive:   make(map[string]int),
 	}
 
 	mux := http.NewServeMux()
@@ -99,6 +103,7 @@ func NewServer(listenAddr string, hostDomainSuffix string, agentSvc *service.Age
 	mux.HandleFunc("/api/v1/payments/notify", server.handlePaymentNotify)
 	mux.HandleFunc("/api/v1/dashboard/summary", server.handleDashboardSummary)
 	mux.HandleFunc("/api/v1/platform/config", server.handlePlatformConfig)
+	mux.HandleFunc("/api/v1/runtime/status", server.handleRuntimeStatus)
 	mux.HandleFunc("/api/v1/usage/connections", server.handleListUsageConnections)
 	mux.HandleFunc("/api/v1/usage/traffic", server.handleListUsageTraffic)
 	mux.HandleFunc("/api/v1/domain-routes", server.handleListDomainRoutes)
@@ -164,6 +169,53 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status": "ok",
 		"time":   time.Now().UTC(),
 	})
+}
+
+func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"time":        time.Now().UTC(),
+		"tcp_runtime": s.runtimeSnapshot(),
+		"bridge":      s.bridgeSnapshot(),
+		"public_http": s.publicHTTPSnapshot(),
+	})
+}
+
+func (s *Server) runtimeSnapshot() any {
+	if s.getRuntimeSnapshot == nil {
+		return nil
+	}
+	return s.getRuntimeSnapshot()
+}
+
+func (s *Server) bridgeSnapshot() any {
+	if s.getBridgeSnapshot == nil {
+		return nil
+	}
+	return s.getBridgeSnapshot()
+}
+
+func (s *Server) publicHTTPSnapshot() map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	activeByTunnel := make(map[string]int, len(s.httpTunnelActive))
+	for tunnelID, active := range s.httpTunnelActive {
+		activeByTunnel[tunnelID] = active
+	}
+	return map[string]any{
+		"active":                 s.publicHTTPActive,
+		"active_by_tunnel":       activeByTunnel,
+		"limit_rejected":         s.publicHTTPLimitRejected,
+		"idle_timeouts":          s.publicHTTPIdleTimeouts,
+		"data_stream_failures":   s.publicHTTPDataStreamFailures,
+		"data_session_successes": s.publicHTTPDataSessionSuccesses,
+		"data_session_failures":  s.publicHTTPDataSessionFailures,
+	}
 }
 
 func (s *Server) handleBootstrapUser(w http.ResponseWriter, r *http.Request) {
@@ -932,10 +984,13 @@ func (s *Server) handlePublicHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	requestStartedAt := time.Now()
 	host := requestHost(r.Host)
 	scheme := requestScheme(r)
+	log.Printf("public http accepted: host=%s scheme=%s method=%s path=%s remote=%s", host, scheme, r.Method, r.URL.RequestURI(), r.RemoteAddr)
 	target, err := s.tunnelSvc.ResolveHTTPRoute(r.Context(), host, scheme)
 	if err != nil {
+		log.Printf("public http route resolve failed: host=%s scheme=%s remote=%s err=%v", host, scheme, r.RemoteAddr, err)
 		switch {
 		case errors.Is(err, service.ErrInvalidArgument), errors.Is(err, service.ErrNotFound):
 			http.NotFound(w, r)
@@ -944,8 +999,11 @@ func (s *Server) handlePublicHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	log.Printf("public http route resolved: host=%s tunnel=%s agent=%s local=%s:%d", host, target.Tunnel.ID, target.Tunnel.AgentID, target.Tunnel.LocalHost, target.Tunnel.LocalPort)
 
+	authorizeStartedAt := time.Now()
 	if err := s.billingSvc.AuthorizeTunnelOpen(r.Context(), target.Tunnel.UserID); err != nil {
+		log.Printf("public http billing denied: host=%s tunnel=%s user=%s took=%s err=%v", host, target.Tunnel.ID, target.Tunnel.UserID, time.Since(authorizeStartedAt), err)
 		if errors.Is(err, service.ErrInsufficientBalance) {
 			writeError(w, http.StatusPaymentRequired, err.Error())
 			return
@@ -953,6 +1011,7 @@ func (s *Server) handlePublicHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	log.Printf("public http billing authorized: host=%s tunnel=%s user=%s took=%s", host, target.Tunnel.ID, target.Tunnel.UserID, time.Since(authorizeStartedAt))
 
 	if !s.tryAcquireHTTPTunnelSlot(target.Tunnel.ID) {
 		s.mu.Lock()
@@ -963,6 +1022,7 @@ func (s *Server) handlePublicHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.releaseHTTPTunnelSlot(target.Tunnel.ID)
+	log.Printf("public http slot acquired: host=%s tunnel=%s remote=%s", host, target.Tunnel.ID, r.RemoteAddr)
 
 	acquireCtx, cancel := context.WithTimeout(r.Context(), publicHTTPBridgeAcquireTimeout)
 	defer cancel()
@@ -991,6 +1051,7 @@ func (s *Server) handlePublicHTTP(w http.ResponseWriter, r *http.Request) {
 
 	connectionID := ""
 	if s.recorder != nil {
+		recordStartedAt := time.Now()
 		startedID, err := s.recorder.StartTunnelConnection(r.Context(), domain.TunnelConnectionStart{
 			TunnelID:   target.Tunnel.ID,
 			AgentID:    target.Tunnel.AgentID,
@@ -999,9 +1060,10 @@ func (s *Server) handlePublicHTTP(w http.ResponseWriter, r *http.Request) {
 			TargetAddr: net.JoinHostPort(target.Tunnel.LocalHost, strconv.Itoa(target.Tunnel.LocalPort)),
 		})
 		if err != nil {
-			log.Printf("start http tunnel connection failed: tunnel=%s err=%v", target.Tunnel.ID, err)
+			log.Printf("public http usage start failed: host=%s tunnel=%s remote=%s took=%s err=%v", host, target.Tunnel.ID, r.RemoteAddr, time.Since(recordStartedAt), err)
 		} else {
 			connectionID = startedID
+			log.Printf("public http usage started: host=%s tunnel=%s connection=%s remote=%s took=%s", host, target.Tunnel.ID, connectionID, r.RemoteAddr, time.Since(recordStartedAt))
 		}
 	}
 
@@ -1021,6 +1083,7 @@ func (s *Server) handlePublicHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if err := outReq.Write(bridgeConn); err != nil {
 		_ = bridgeConn.SetWriteDeadline(time.Time{})
+		log.Printf("public http write request failed: host=%s tunnel=%s remote=%s err=%v", host, target.Tunnel.ID, r.RemoteAddr, err)
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -1046,6 +1109,7 @@ func (s *Server) handlePublicHTTP(w http.ResponseWriter, r *http.Request) {
 			s.publicHTTPIdleTimeouts++
 			s.mu.Unlock()
 		}
+		log.Printf("public http read response failed: host=%s tunnel=%s remote=%s took=%s err=%v", host, target.Tunnel.ID, r.RemoteAddr, time.Since(readStartedAt), err)
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -1069,6 +1133,7 @@ func (s *Server) handlePublicHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Printf("public http copy body failed: host=%s tunnel=%s err=%v", host, target.Tunnel.ID, copyErr)
 	}
 	log.Printf("public http copied response body: host=%s tunnel=%s bytes=%d", host, target.Tunnel.ID, copied)
+	log.Printf("public http completed: host=%s tunnel=%s remote=%s status=%d bytes=%d duration=%s", host, target.Tunnel.ID, r.RemoteAddr, resp.StatusCode, copied, time.Since(requestStartedAt))
 
 	if s.recorder != nil && connectionID != "" {
 		requestBytes := r.ContentLength

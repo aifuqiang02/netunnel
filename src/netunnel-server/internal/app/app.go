@@ -68,7 +68,21 @@ func Bootstrap(ctx context.Context, cfg config.Config) (*App, error) {
 	tunnelSvc := service.NewTunnelService(tunnelRepo, domainRouteRepo, tcpRuntime, portRepo, cfg.TCPPortRanges, cfg.PublicHost, cfg.HostDomainSuffix)
 	usageSvc := service.NewUsageService(usageRepo)
 	dashboardSvc := service.NewDashboardService(userRepo, agentRepo, tunnelRepo, billingSvc, usageSvc)
-	httpServer := transporthttp.NewServer(cfg.ListenAddr, cfg.HostDomainSuffix, agentSvc, userSvc, billingSvc, paymentSvc, tunnelSvc, usageSvc, dashboardSvc, bridgeManager, usageRepo)
+	httpServer := transporthttp.NewServer(
+		cfg.ListenAddr,
+		cfg.HostDomainSuffix,
+		agentSvc,
+		userSvc,
+		billingSvc,
+		paymentSvc,
+		tunnelSvc,
+		usageSvc,
+		dashboardSvc,
+		bridgeManager,
+		usageRepo,
+		func() any { return tcpRuntime.Snapshot() },
+		func() any { return bridgeManager.Snapshot() },
+	)
 
 	activeTunnels, err := tunnelRepo.ListActiveTCP(ctx)
 	if err != nil {

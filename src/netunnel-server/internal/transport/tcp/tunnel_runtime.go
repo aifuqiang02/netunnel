@@ -45,6 +45,20 @@ type Runtime struct {
 	summaryOnce                sync.Once
 }
 
+type RuntimeSnapshot struct {
+	Listeners                  int            `json:"listeners"`
+	ActiveConnections          int            `json:"active_connections"`
+	TunnelActiveConnections    map[string]int `json:"tunnel_active_connections"`
+	TotalAccepted              uint64         `json:"total_accepted"`
+	DataSessionAcquireFailures uint64         `json:"data_session_acquire_failures"`
+	DataSessionSuccesses       uint64         `json:"data_session_successes"`
+	DataSessionFailures        uint64         `json:"data_session_failures"`
+	CopyFailures               uint64         `json:"copy_failures"`
+	DeniedConnections          uint64         `json:"denied_connections"`
+	LimitRejected              uint64         `json:"limit_rejected"`
+	IdleTimeoutCloses          uint64         `json:"idle_timeout_closes"`
+}
+
 const runtimeSummaryInterval = 1 * time.Minute
 const connectionProgressFlushInterval = 15 * time.Second
 const tunnelIOIdleTimeout = 60 * time.Second
@@ -96,6 +110,29 @@ func (r *Runtime) logSummary() {
 		r.copyFailures,
 		r.idleTimeoutCloses,
 	)
+}
+
+func (r *Runtime) Snapshot() RuntimeSnapshot {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	snapshot := RuntimeSnapshot{
+		Listeners:                  len(r.listeners),
+		ActiveConnections:          r.activeConnections,
+		TunnelActiveConnections:    make(map[string]int, len(r.tunnelActiveConnections)),
+		TotalAccepted:              r.totalAccepted,
+		DataSessionAcquireFailures: r.dataSessionAcquireFailures,
+		DataSessionSuccesses:       r.dataSessionSuccesses,
+		DataSessionFailures:        r.dataSessionFailures,
+		CopyFailures:               r.copyFailures,
+		DeniedConnections:          r.deniedConnections,
+		LimitRejected:              r.limitRejected,
+		IdleTimeoutCloses:          r.idleTimeoutCloses,
+	}
+	for tunnelID, active := range r.tunnelActiveConnections {
+		snapshot.TunnelActiveConnections[tunnelID] = active
+	}
+	return snapshot
 }
 
 func (r *Runtime) changeActiveConnections(delta int) {
@@ -173,43 +210,53 @@ func (r *Runtime) serveTunnel(ctx context.Context, tunnel domain.Tunnel, ln net.
 
 func (r *Runtime) handleRemoteConn(ctx context.Context, tunnel domain.Tunnel, remoteConn net.Conn) {
 	defer remoteConn.Close()
+	startedAt := time.Now()
+	remoteAddr := remoteConn.RemoteAddr().String()
 	r.mu.Lock()
 	r.totalAccepted++
+	accepted := r.totalAccepted
 	r.mu.Unlock()
+	log.Printf("tcp tunnel accepted: tunnel=%s agent=%s remote=%s local=%s:%d accepted=%d", tunnel.ID, tunnel.AgentID, remoteAddr, tunnel.LocalHost, tunnel.LocalPort, accepted)
 	if !r.tryAcquireTunnelSlot(tunnel.ID) {
 		r.mu.Lock()
 		r.limitRejected++
+		limitRejected := r.limitRejected
 		r.mu.Unlock()
-		log.Printf("tcp tunnel rejected by active limit: tunnel=%s limit=%d", tunnel.ID, maxActiveConnectionsPerTunnel)
+		log.Printf("tcp tunnel rejected by active limit: tunnel=%s remote=%s limit=%d rejected=%d", tunnel.ID, remoteAddr, maxActiveConnectionsPerTunnel, limitRejected)
 		return
 	}
 	defer r.releaseTunnelSlot(tunnel.ID)
 	r.changeActiveConnections(1)
 	defer r.changeActiveConnections(-1)
+	log.Printf("tcp tunnel slot acquired: tunnel=%s remote=%s", tunnel.ID, remoteAddr)
 
 	if r.authorizer != nil {
+		authorizeStartedAt := time.Now()
 		if err := r.authorizer.AuthorizeTunnelOpen(ctx, tunnel.UserID); err != nil {
 			r.mu.Lock()
 			r.deniedConnections++
 			r.mu.Unlock()
-			log.Printf("tcp tunnel denied by billing: tunnel=%s user=%s err=%v", tunnel.ID, tunnel.UserID, err)
+			log.Printf("tcp tunnel denied by billing: tunnel=%s user=%s remote=%s took=%s err=%v", tunnel.ID, tunnel.UserID, remoteAddr, time.Since(authorizeStartedAt), err)
 			return
 		}
+		log.Printf("tcp tunnel billing authorized: tunnel=%s user=%s remote=%s took=%s", tunnel.ID, tunnel.UserID, remoteAddr, time.Since(authorizeStartedAt))
 	}
 
 	connectionID := ""
 	if r.recorder != nil {
+		recordStartedAt := time.Now()
 		startedID, err := r.recorder.StartTunnelConnection(ctx, domain.TunnelConnectionStart{
 			TunnelID:   tunnel.ID,
 			AgentID:    tunnel.AgentID,
 			Protocol:   "tcp",
-			SourceAddr: remoteConn.RemoteAddr().String(),
+			SourceAddr: remoteAddr,
 			TargetAddr: net.JoinHostPort(tunnel.LocalHost, strconv.Itoa(tunnel.LocalPort)),
 		})
 		if err != nil {
-			log.Printf("start tunnel connection failed: tunnel=%s err=%v", tunnel.ID, err)
+			log.Printf("tcp tunnel usage start failed: tunnel=%s remote=%s took=%s err=%v", tunnel.ID, remoteAddr, time.Since(recordStartedAt), err)
 		} else {
 			connectionID = startedID
+			log.Printf("tcp tunnel usage started: tunnel=%s connection=%s remote=%s took=%s", tunnel.ID, connectionID, remoteAddr, time.Since(recordStartedAt))
 		}
 	}
 
@@ -230,10 +277,11 @@ func (r *Runtime) handleRemoteConn(ctx context.Context, tunnel domain.Tunnel, re
 		r.mu.Lock()
 		r.dataSessionAcquireFailures++
 		r.mu.Unlock()
-		log.Printf("open data stream failed: tunnel=%s err=%v", tunnel.ID, err)
+		log.Printf("tcp tunnel open data stream failed: tunnel=%s agent=%s remote=%s took=%s err=%v", tunnel.ID, tunnel.AgentID, remoteAddr, time.Since(startedAt), err)
 		return
 	}
 	defer bridgeConn.Close()
+	log.Printf("tcp tunnel open data stream ok: tunnel=%s agent=%s remote=%s took=%s", tunnel.ID, tunnel.AgentID, remoteAddr, time.Since(startedAt))
 
 	type copyResult struct {
 		bytes int64
@@ -283,14 +331,15 @@ func (r *Runtime) handleRemoteConn(ctx context.Context, tunnel domain.Tunnel, re
 		r.mu.Lock()
 		r.copyFailures++
 		r.mu.Unlock()
-		log.Printf("tcp copy failed: tunnel=%s err=%v", tunnel.ID, first.err)
+		log.Printf("tcp copy failed: tunnel=%s remote=%s err=%v", tunnel.ID, remoteAddr, first.err)
 	}
 	if second.err != nil && second.err != io.EOF {
 		r.mu.Lock()
 		r.copyFailures++
 		r.mu.Unlock()
-		log.Printf("tcp copy failed: tunnel=%s err=%v", tunnel.ID, second.err)
+		log.Printf("tcp copy failed: tunnel=%s remote=%s err=%v", tunnel.ID, remoteAddr, second.err)
 	}
+	log.Printf("tcp tunnel closed: tunnel=%s remote=%s ingress=%d egress=%d duration=%s first_err=%v second_err=%v", tunnel.ID, remoteAddr, first.bytes, second.bytes, time.Since(startedAt), first.err, second.err)
 
 	if r.recorder != nil && connectionID != "" {
 		if err := r.recorder.FinishTunnelConnection(ctx, domain.TunnelConnectionFinish{

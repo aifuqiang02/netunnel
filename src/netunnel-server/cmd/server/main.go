@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"netunnel/server/internal/app"
@@ -13,6 +15,13 @@ import (
 )
 
 func main() {
+	logFile, err := setupFileLogging()
+	if err != nil {
+		log.Printf("setup file logging: %v", err)
+	} else {
+		defer logFile.Close()
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
@@ -34,4 +43,19 @@ func main() {
 	if err := application.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatalf("run app: %v", err)
 	}
+}
+
+func setupFileLogging() (*os.File, error) {
+	logPath := filepath.Join("logs", "server.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
+		return nil, err
+	}
+
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, err
+	}
+	log.SetOutput(io.MultiWriter(os.Stderr, file))
+	log.Printf("file logging enabled: path=%s", logPath)
+	return file, nil
 }

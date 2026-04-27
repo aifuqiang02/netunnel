@@ -159,6 +159,21 @@ type DataSessionManager struct {
 	perTunnelActive      map[string]int
 }
 
+type DataSessionSnapshot struct {
+	Sessions             int            `json:"sessions"`
+	ActiveStreams        int            `json:"active_streams"`
+	ConnectedSessions    uint64         `json:"connected_sessions"`
+	DisconnectedSessions uint64         `json:"disconnected_sessions"`
+	OpenSuccesses        uint64         `json:"open_successes"`
+	OpenFailures         uint64         `json:"open_failures"`
+	OpenTimeouts         uint64         `json:"open_timeouts"`
+	StreamRemoteCloses   uint64         `json:"stream_remote_closes"`
+	StreamLocalCloses    uint64         `json:"stream_local_closes"`
+	StreamOverflowCloses uint64         `json:"stream_overflow_closes"`
+	PerAgentStreams      map[string]int `json:"per_agent_streams"`
+	PerTunnelActive      map[string]int `json:"per_tunnel_active"`
+}
+
 const dataSessionOpenTimeout = 10 * time.Second
 
 const dataSessionSummaryInterval = 1 * time.Minute
@@ -220,6 +235,36 @@ func (m *DataSessionManager) logSummary() {
 	}
 }
 
+func (m *DataSessionManager) Snapshot() DataSessionSnapshot {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	snapshot := DataSessionSnapshot{
+		Sessions:             len(m.sessions),
+		ConnectedSessions:    m.connectedSessions,
+		DisconnectedSessions: m.disconnectedSessions,
+		OpenSuccesses:        m.openSuccesses,
+		OpenFailures:         m.openFailures,
+		OpenTimeouts:         m.openTimeouts,
+		StreamRemoteCloses:   m.streamRemoteCloses,
+		StreamLocalCloses:    m.streamLocalCloses,
+		StreamOverflowCloses: m.streamOverflowCloses,
+		PerAgentStreams:      make(map[string]int, len(m.sessions)),
+		PerTunnelActive:      make(map[string]int, len(m.perTunnelActive)),
+	}
+	for agentID, session := range m.sessions {
+		session.mu.Lock()
+		streamCount := len(session.streams)
+		session.mu.Unlock()
+		snapshot.ActiveStreams += streamCount
+		snapshot.PerAgentStreams[agentID] = streamCount
+	}
+	for tunnelID, active := range m.perTunnelActive {
+		snapshot.PerTunnelActive[tunnelID] = active
+	}
+	return snapshot
+}
+
 func (m *DataSessionManager) HandleConn(ctx context.Context, conn net.Conn, hello dataSessionHello) error {
 	ok, err := m.runtimeRepo.ValidateAgentSession(ctx, hello.AgentID, hello.SecretKey)
 	if err != nil {
@@ -263,10 +308,12 @@ func (m *DataSessionManager) HandleConn(ctx context.Context, conn net.Conn, hell
 }
 
 func (m *DataSessionManager) OpenStream(ctx context.Context, agentID, tunnelID string) (net.Conn, error) {
+	startedAt := time.Now()
 	m.mu.Lock()
 	session := m.sessions[agentID]
 	m.mu.Unlock()
 	if session == nil {
+		log.Printf("data session open skipped: agent=%s tunnel=%s err=no_session", agentID, tunnelID)
 		return nil, fmt.Errorf("no data session for agent %s", agentID)
 	}
 
@@ -276,9 +323,13 @@ func (m *DataSessionManager) OpenStream(ctx context.Context, agentID, tunnelID s
 	atomic.AddUint64(&session.openedStreams, 1)
 	m.mu.Lock()
 	m.perTunnelActive[tunnelID]++
+	activeForTunnel := m.perTunnelActive[tunnelID]
 	m.mu.Unlock()
+	log.Printf("data session open requested: agent=%s tunnel=%s stream=%s active_for_tunnel=%d", agentID, tunnelID, streamID, activeForTunnel)
 	if err := session.sendFrame(dataSessionFrame{Type: dataSessionFrameOpen, StreamID: streamID, TunnelID: tunnelID}); err != nil {
 		session.removeStream(streamID)
+		m.trackTunnelClose(tunnelID)
+		log.Printf("data session open send failed: agent=%s tunnel=%s stream=%s took=%s err=%v", agentID, tunnelID, streamID, time.Since(startedAt), err)
 		return nil, err
 	}
 
@@ -290,6 +341,7 @@ func (m *DataSessionManager) OpenStream(ctx context.Context, agentID, tunnelID s
 			m.mu.Lock()
 			m.openSuccesses++
 			m.mu.Unlock()
+			log.Printf("data session open ok: agent=%s tunnel=%s stream=%s took=%s", agentID, tunnelID, streamID, time.Since(startedAt))
 			return stream, nil
 		}
 		m.mu.Lock()
@@ -297,6 +349,7 @@ func (m *DataSessionManager) OpenStream(ctx context.Context, agentID, tunnelID s
 		m.mu.Unlock()
 		m.trackTunnelClose(tunnelID)
 		session.removeStream(streamID)
+		log.Printf("data session open failed: agent=%s tunnel=%s stream=%s took=%s err=%v", agentID, tunnelID, streamID, time.Since(startedAt), err)
 		return nil, err
 	case <-openTimer.C:
 		m.mu.Lock()
@@ -305,6 +358,7 @@ func (m *DataSessionManager) OpenStream(ctx context.Context, agentID, tunnelID s
 		m.mu.Unlock()
 		m.trackTunnelClose(tunnelID)
 		session.removeStream(streamID)
+		log.Printf("data session open timeout: agent=%s tunnel=%s stream=%s took=%s", agentID, tunnelID, streamID, time.Since(startedAt))
 		return nil, fmt.Errorf("data session open timeout: tunnel=%s", tunnelID)
 	case <-ctx.Done():
 		m.mu.Lock()
@@ -312,6 +366,7 @@ func (m *DataSessionManager) OpenStream(ctx context.Context, agentID, tunnelID s
 		m.mu.Unlock()
 		m.trackTunnelClose(tunnelID)
 		session.removeStream(streamID)
+		log.Printf("data session open context done: agent=%s tunnel=%s stream=%s took=%s err=%v", agentID, tunnelID, streamID, time.Since(startedAt), ctx.Err())
 		return nil, ctx.Err()
 	}
 }

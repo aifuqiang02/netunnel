@@ -26,6 +26,14 @@ type BridgeManager struct {
 	summaryOnce             sync.Once
 }
 
+type BridgeSnapshot struct {
+	ListenAddr              string              `json:"listen_addr"`
+	AcceptedConnections     uint64              `json:"accepted_connections"`
+	HandshakeDecodeFailures uint64              `json:"handshake_decode_failures"`
+	ValidationFailures      uint64              `json:"validation_failures"`
+	DataSession             DataSessionSnapshot `json:"data_session"`
+}
+
 const bridgeManagerSummaryInterval = 1 * time.Minute
 
 func NewBridgeManager(listenAddr string, runtimeRepo *repository.TunnelRuntimeRepository) *BridgeManager {
@@ -126,6 +134,19 @@ func (m *BridgeManager) handleConn(ctx context.Context, conn net.Conn) {
 
 func (m *BridgeManager) OpenDataStream(ctx context.Context, agentID, tunnelID string) (net.Conn, error) {
 	return m.dataSession.OpenStream(ctx, agentID, tunnelID)
+}
+
+func (m *BridgeManager) Snapshot() BridgeSnapshot {
+	m.mu.Lock()
+	snapshot := BridgeSnapshot{
+		ListenAddr:              m.listenAddr,
+		AcceptedConnections:     m.acceptedConnections,
+		HandshakeDecodeFailures: m.handshakeDecodeFailures,
+		ValidationFailures:      m.validationFailures,
+	}
+	m.mu.Unlock()
+	snapshot.DataSession = m.dataSession.Snapshot()
+	return snapshot
 }
 
 func configureBridgeTCPKeepAlive(conn net.Conn, period time.Duration) {
